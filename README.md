@@ -21,7 +21,7 @@ The command-line arguments are:
   *P: the UDP port number of NetEmu  
 #### Commands
 Command: "window W"  
-  *Set the maximum receiver’s window-size at the FxA-Server  
+  *Set the maximum receiver's window-size at the FxA-Server  
   *W: The window-size (in segments).
   
 Command: "terminate"  
@@ -35,7 +35,7 @@ Py FxA-client.py X A P
 
 The command-line arguments are:
 
-X: the port number at which the FxA-client’s UDP socket should bind to (even number). Please remember that this port number should be equal to the server’s port number minus 1.
+X: the port number at which the FxA-client's UDP socket should bind to (even number). Please remember that this port number should be equal to the server's port number minus 1.
 A: the IP address of NetEmu
 P: the UDP port number of NetEmu
 
