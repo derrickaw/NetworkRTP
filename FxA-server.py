@@ -1,16 +1,17 @@
+#!python2
+
 import sys
 import socket
 
 
 def main(argv):
     if len(argv) != 3:
-        print "Correct usage: FxA-Client X A P"
+        print("Correct usage: FxA-Client X A P")
         sys.exit(1)
 
     serverport = argv[0]
     ipaddress = argv[1]
     netemuport = argv[2]
-    isConnected = False
     x = ''
     window = 0
 

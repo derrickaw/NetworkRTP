@@ -1,10 +1,12 @@
+#!python2
+
 import sys
 import socket
 
 
 def main(argv):
     if len(argv) != 3:
-        print "Correct usage: FxA-Client X A P"
+        print("Correct usage: FxA-Client X A P")
         sys.exit(1)
 
     clientport = argv[0]
@@ -50,8 +52,11 @@ def main(argv):
             # TODO connect() call
             isConnected = True
         elif x == 'disconnect':
-            # TODO disconnect() call
-            break
+            if isConnected:
+                # TODO disconnect() call
+                break
+            else:
+                print('post not valid without existing connection')
         else:
             y = x.split(" ")
             if y[0] == 'get':
