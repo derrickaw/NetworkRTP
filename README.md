@@ -1,5 +1,5 @@
 # NetworkingRTP
-CS3251 Fall 2015 Programming Assignment 2
+**CS3251 Fall 2015 Programming Assignment 2**
 
 Elliott Childre
 rchildre3@gatech.edu
@@ -8,6 +8,12 @@ rchildre3
 Derrick Williams
 derrickw@gatech.edu
 dwilliams306
+
+| Tables        | Are           | Cool  |
+| ------------- |:-------------:| -----:|
+| col 3 is      | right-aligned | $1600 |
+| col 2 is      | centered      |   $12 |
+| zebra stripes | are neat      |    $1 |
 
 ## Usage
 To run the FxA application use the following commands
