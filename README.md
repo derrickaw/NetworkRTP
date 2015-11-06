@@ -1,19 +1,10 @@
 # NetworkingRTP
 **CS3251 Fall 2015 Programming Assignment 2**
 
-Elliott Childre
-rchildre3@gatech.edu
-rchildre3
-
-Derrick Williams
-derrickw@gatech.edu
-dwilliams306
-
-| Tables        | Are           | Cool  |
-| ------------- |:-------------:| -----:|
-| col 3 is      | right-aligned | $1600 |
-| col 2 is      | centered      |   $12 |
-| zebra stripes | are neat      |    $1 |
+| Developer        | Email                | gtID         |
+| ---------------- |:--------------------:| :-----------:|
+| Elliott Childre  | rchildre3@gatech.edu | rchildre3    |
+| Derrick Williams | derrickw@gatech.edu  | dwilliams306 |
 
 ## Usage
 To run the FxA application use the following commands
@@ -22,21 +13,19 @@ To run the FxA application use the following commands
 
 #### Startup
 
-Py FxA-server.py X A P
-
-The command-line arguments are:
-
-X: the port number at which the FxA-server’s UDP socket should bind to (odd number)
-A: the IP address of NetEmu
-P: the UDP port number of NetEmu
-
+Py FxA-server.py X A P  
+  
+The command-line arguments are:  
+  *X: the port number at which the FxA-server’s UDP socket should bind to (odd number)  
+  *A: the IP address of NetEmu  
+  *P: the UDP port number of NetEmu  
 #### Commands
-Command: "window W"
-	Set the maximum receiver’s window-size at the FxA-Server
-	W: The window-size (in segments).
-
-Command: "terminate"
-	Shut-down FxA-Server gracefully.
+Command: "window W"  
+  *Set the maximum receiver’s window-size at the FxA-Server  
+  *W: The window-size (in segments).
+  
+Command: "terminate"  
+  *Shut-down FxA-Server gracefully.
 
 ### Client
 
