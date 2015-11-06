@@ -12,6 +12,7 @@ def main(argv):
     netemuport = argv[2]
     isConnected = False
     x = ''
+    window = 0
 
     try:
         clientport = int(clientport)
@@ -35,10 +36,6 @@ def main(argv):
     except ValueError:
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
-
-    # print 'print type(clientport)' + str(type(clientport))
-    # print 'print type(ipaddress)' + str(type(ipaddress))
-    # print 'print type(netemuport)' + str(type(netemuport))
 
     print('Command Options:')
     print('connect\t\t|\tConnects to the FxA-server')
@@ -79,11 +76,13 @@ def main(argv):
                 if len(y) != 2:
                     print("Invalid command: window requires secondary parameter")
                     continue
-                if isConnected:
-                    # TODO window()
-                    print('window')
-                else:
-                    print('window not valid without existing connection')
+                try:
+                    window = int(y[1])
+                except ValueError:
+                    print('Invalid window size (not a number): %s' % y[1])
+                    continue
+                # TODO window()
+                print('window')
             else:
                 print("Command not recognized")
 
