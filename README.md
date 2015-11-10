@@ -13,7 +13,7 @@ To run the FxA application use the following commands
 
 #### Startup
 
-Py FxA-server.py X A P  
+python FxA-server.py X A P  
   
 The command-line arguments are:  
   *X: the port number at which the FxA-server’s UDP socket should bind to (odd number)  
@@ -31,7 +31,7 @@ Command: "terminate"
 
 #### Startup
 
-Py FxA-client.py X A P
+python FxA-client.py X A P
 
 The command-line arguments are:
 

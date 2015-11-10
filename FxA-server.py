@@ -1,5 +1,3 @@
-#!python2
-
 import sys
 import socket
 
@@ -37,6 +35,8 @@ def main(argv):
     except ValueError:
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
+
+    # TODO setupConnection()
 
     print('Command Options:')
     print("window W\t|\tSets the maximum receiver's window size")
