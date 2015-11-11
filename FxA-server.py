@@ -36,7 +36,7 @@ def main(argv):
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
 
-    # TODO setupConnection()
+    setup_connection(serverport, ipaddress, netemuport)
 
     print('Command Options:')
     print("window W\t|\tSets the maximum receiver's window size")
@@ -62,6 +62,10 @@ def main(argv):
                 print('window')
             else:
                 print("Command not recognized")
+
+
+def setup_connection(serverport, ipaddress, netemuport):
+
 
 if __name__ == "__main__":
     main(sys.argv[1:])
