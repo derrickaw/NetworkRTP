@@ -1,5 +1,5 @@
-import sys
-import socket
+from socket import *
+
 
 
 def main(argv):
@@ -36,7 +36,8 @@ def main(argv):
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
 
-    setup_connection(serverport, ipaddress, netemuport)
+    s = socket(AF_INET, SOCK_DGRAM)
+    s.bind(('', serverport))
 
     print('Command Options:')
     print("window W\t|\tSets the maximum receiver's window size")
@@ -64,7 +65,11 @@ def main(argv):
                 print("Command not recognized")
 
 
-def setup_connection(serverport, ipaddress, netemuport):
+class Connection:
+    
+
+    def __init__(self):
+        self.data = []
 
 
 if __name__ == "__main__":
