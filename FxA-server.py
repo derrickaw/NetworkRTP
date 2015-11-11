@@ -1,5 +1,5 @@
 from socket import *
-
+from threading import Timer
 
 
 def main(argv):
@@ -65,11 +65,44 @@ def main(argv):
                 print("Command not recognized")
 
 
+def send(param, param1, param2):
+    pass
+
+
 class Connection:
-    
+
+    def __init__(self, state, sender_ip, sender_port):
+        self.state = state
+        self.sender_ip = sender_ip
+        self.sender_port = sender_port
+        self.timer = Timer(10, timeout)
+        self.timer.start()
+
+    def update_on_receive(self, syn, ack, fin):
+        self.timer.cancel()
+
+        if self.state == State.SYN_RECEIVED:
+            if ack:
+                pass
+
+        self.timer = Timer(10, timeout)
+        self.timer.start()
+
+
+class State:
+    SYN_SENT = 1
+    SYN_RECEIVED = 2
+    SYN_SENT_HASH = 3
+    ESTABLISHED = 4
+    FIN_WAIT_1 = 5
+    FIN_WAIT_2 = 6
+    CLOSE_WAIT = 7
+    CLOSING = 8
+    LAST_ACK = 9
+    TIME_WAIT = 10
 
     def __init__(self):
-        self.data = []
+        pass
 
 
 if __name__ == "__main__":
