@@ -50,11 +50,8 @@ def main(argv):
             # TODO connect() call
             is_connected = True
         elif x == 'disconnect':
-            if is_connected:
-                # TODO disconnect() call
-                break
-            else:
-                print('post not valid without existing connection')
+            # TODO disconnect() call
+            break
         else:
             y = x.split(" ")
             if y[0] == 'get':
