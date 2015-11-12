@@ -1,11 +1,23 @@
+import random
 import socket
+import struct
 import sys
+
+
+seq_num = random.randint(0, 2**32-1)
+ack_num = 0
+window_size = 0
+
+
+def send(seq_num, ack_num, window_size, ack, syn, fin, nack, ip_address, port):
+    pass
 
 
 def connect(client_port, ip_address, net_emu_port):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(('', client_port))
-    # send()
+    send(seq_num, ack_num, window_size, 0, 1, 0, 0, ip_address, net_emu_port)
+    return False
 
 
 def main(argv):
@@ -18,8 +30,8 @@ def main(argv):
     net_emu_port = argv[2]
     is_connected = False
     x = ''
-    window = 0
     state = State.CLOSED
+
 
     try:
         client_port = int(client_port)
@@ -83,7 +95,7 @@ def main(argv):
                     print("Invalid command: window requires secondary parameter")
                     continue
                 try:
-                    window = int(y[1])
+                    window_size = int(y[1])
                 except ValueError:
                     print('Invalid window size (not a number): %s' % y[1])
                     continue
