@@ -1,5 +1,5 @@
-import sys
 import socket
+import sys
 
 
 def main(argv):
@@ -7,32 +7,32 @@ def main(argv):
         print("Correct usage: FxA-Client X A P")
         sys.exit(1)
 
-    clientport = argv[0]
-    ipaddress = argv[1]
-    netemuport = argv[2]
-    isConnected = False
+    client_port = argv[0]
+    ip_address = argv[1]
+    net_emu_port = argv[2]
+    is_connected = False
     x = ''
     window = 0
 
     try:
-        clientport = int(clientport)
+        client_port = int(client_port)
     except ValueError:
         print('Invalid client port number %s' % argv[0])
         sys.exit(1)
 
-    if clientport % 2 == 1:
-        print('Client port number: %d was not even number' % clientport)
+    if client_port % 2 == 1:
+        print('Client port number: %d was not even number' % client_port)
         sys.exit(1)
 
     try:
-        ipaddress = socket.inet_aton(ipaddress)
+        ip_address = socket.inet_aton(ip_address)
     except socket.error:
         print("Invalid IP notation: %s" % argv[1])
         sys.exit(1)
         # TODO check if port is open!
 
     try:
-        netemuport = int(netemuport)
+        net_emu_port = int(net_emu_port)
     except ValueError:
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
@@ -48,9 +48,9 @@ def main(argv):
         x = raw_input('Please enter command:')
         if x == 'connect':
             # TODO connect() call
-            isConnected = True
+            is_connected = True
         elif x == 'disconnect':
-            if isConnected:
+            if is_connected:
                 # TODO disconnect() call
                 break
             else:
@@ -61,7 +61,7 @@ def main(argv):
                 if len(y) != 2:
                     print("Invalid command: get requires secondary parameter")
                     continue
-                if isConnected:
+                if is_connected:
                     # TODO get()
                     print('get')
                 else:
@@ -70,7 +70,7 @@ def main(argv):
                 if len(y) != 2:
                     print("Invalid command: post requires secondary parameter")
                     continue
-                if isConnected:
+                if is_connected:
                     # TODO post()
                     print('post')
                 else:

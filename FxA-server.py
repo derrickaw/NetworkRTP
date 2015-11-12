@@ -7,37 +7,37 @@ def main(argv):
         print("Correct usage: FxA-Client X A P")
         sys.exit(1)
 
-    serverport = argv[0]
-    ipaddress = argv[1]
-    netemuport = argv[2]
+    server_port = argv[0]
+    ip_address = argv[1]
+    net_emu_port = argv[2]
     x = ''
     window = 0
 
     try:
-        serverport = int(serverport)
+        server_port = int(server_port)
     except ValueError:
         print('Invalid server port number %s' % argv[0])
         sys.exit(1)
 
-    if serverport % 2 == 0:
-        print('Server port number: %d was not an odd number' % serverport)
+    if server_port % 2 == 0:
+        print('Server port number: %d was not an odd number' % server_port)
         sys.exit(1)
 
     try:
-        ipaddress = socket.inet_aton(ipaddress)
+        ip_address = socket.inet_aton(ip_address)
     except socket.error:
         print("Invalid IP notation: %s" % argv[1])
         sys.exit(1)
         # TODO check if port is open!
 
     try:
-        netemuport = int(netemuport)
+        net_emu_port = int(net_emu_port)
     except ValueError:
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
 
     s = socket(AF_INET, SOCK_DGRAM)
-    s.bind(('', serverport))
+    s.bind(('', server_port))
 
     print('Command Options:')
     print("window W\t|\tSets the maximum receiver's window size")
