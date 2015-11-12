@@ -76,8 +76,8 @@ def timeout(args):
 
 class Connection:
 
-    def __init__(self, state, sender_ip, sender_port):
-        self.state = state
+    def __init__(self, sender_ip, sender_port):
+        self.state = State.SYN_RECEIVED
         self.sender_ip = sender_ip
         self.sender_port = sender_port
         self.timer = Timer(10, timeout)
@@ -87,8 +87,10 @@ class Connection:
         self.timer.cancel()
 
         if self.state == State.SYN_RECEIVED:
-            if ack:
+            if syn and ack and not fin:
                 pass
+
+
 
         self.timer = Timer(10, timeout)
         self.timer.start()
