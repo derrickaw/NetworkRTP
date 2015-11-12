@@ -1,3 +1,4 @@
+import Queue
 import socket
 import sys
 from threading import Timer
@@ -13,6 +14,8 @@ def main(argv):
     net_emu_port = argv[2]
     x = ''
     window = 0
+    max_connections = 1000
+
 
     try:
         server_port = int(server_port)
@@ -39,6 +42,7 @@ def main(argv):
 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(('', server_port))
+    q = Queue.Queue(max_connections)
 
     print('Command Options:')
     print("window W\t|\tSets the maximum receiver's window size")
@@ -74,6 +78,14 @@ def timeout(args):
     pass
 
 
+def acknowledge():
+    pass
+
+
+def checkhash():
+    pass
+
+
 class Connection:
 
     def __init__(self, sender_ip, sender_port):
@@ -88,9 +100,36 @@ class Connection:
 
         if self.state == State.SYN_RECEIVED:
             if syn and ack and not fin:
-                pass
-
-
+                if checkhash():
+                    self.state = State.ESTABLISHED
+                    acknowledge()
+                else:
+                    self.state = State.CLOSED
+        elif self.state == State.ESTABLISHED:
+            if not syn and not ack and fin:
+                self.state = State.CLOSE_WAIT
+                acknowledge()
+        elif self.state == State.LAST_ACK:
+            if not syn and ack and not fin:
+                self.state = State.CLOSED
+        elif self.state == State.FIN_WAIT_1:
+            if not syn and not ack and fin:
+                acknowledge()
+                self.state = State.CLOSING
+            if not syn and ack and not fin:
+                self.state = State.FIN_WAIT_2
+            if not syn and ack and fin:
+                acknowledge()
+                self.state = State.TIME_WAIT
+        elif self.state == State.FIN_WAIT_2:
+            if not syn and not ack and fin:
+                acknowledge()
+                self.state = State.TIME_WAIT
+        elif self.state == State.CLOSING:
+            if not syn and ack and not fin:
+                self.state = State.TIME_WAIT
+        else:
+            print('state not valid')
 
         self.timer = Timer(10, timeout)
         self.timer.start()
@@ -107,6 +146,7 @@ class State:
     CLOSING = 8
     LAST_ACK = 9
     TIME_WAIT = 10
+    CLOSED = 11
 
     def __init__(self):
         pass
