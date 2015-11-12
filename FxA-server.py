@@ -1,4 +1,5 @@
-from socket import *
+import sys
+import socket
 from threading import Timer
 
 
@@ -36,7 +37,7 @@ def main(argv):
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
 
-    s = socket(AF_INET, SOCK_DGRAM)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(('', server_port))
 
     print('Command Options:')
@@ -66,6 +67,10 @@ def main(argv):
 
 
 def send(param, param1, param2):
+    pass
+
+
+def timeout(args):
     pass
 
 
