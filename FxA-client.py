@@ -2,6 +2,12 @@ import socket
 import sys
 
 
+def connect(client_port, ip_address, net_emu_port):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(('', client_port))
+    # send()
+
+
 def main(argv):
     if len(argv) != 3:
         print("Correct usage: FxA-Client X A P")
@@ -13,6 +19,7 @@ def main(argv):
     is_connected = False
     x = ''
     window = 0
+    state = State.CLOSED
 
     try:
         client_port = int(client_port)
@@ -47,8 +54,7 @@ def main(argv):
     while x != 'disconnect':
         x = raw_input('Please enter command:')
         if x == 'connect':
-            # TODO connect() call
-            is_connected = True
+            is_connected = connect(client_port, ip_address, net_emu_port)
         elif x == 'disconnect':
             # TODO disconnect() call
             break
@@ -85,6 +91,24 @@ def main(argv):
                 print('window')
             else:
                 print("Command not recognized")
+
+
+class State:
+    SYN_SENT = 1
+    SYN_RECEIVED = 2
+    SYN_SENT_HASH = 3
+    ESTABLISHED = 4
+    FIN_WAIT_1 = 5
+    FIN_WAIT_2 = 6
+    CLOSE_WAIT = 7
+    CLOSING = 8
+    LAST_ACK = 9
+    TIME_WAIT = 10
+    CLOSED = 11
+
+    def __init__(self):
+        pass
+
 
 if __name__ == "__main__":
     main(sys.argv[1:])
