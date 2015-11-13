@@ -1,4 +1,3 @@
-import Queue
 import socket
 import sys
 from threading import Timer
@@ -14,8 +13,6 @@ def main(argv):
     net_emu_port = argv[2]
     x = ''
     window = 0
-    max_connections = 1000
-
 
     try:
         server_port = int(server_port)
@@ -42,7 +39,6 @@ def main(argv):
 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(('', server_port))
-    q = Queue.Queue(max_connections)
 
     print('Command Options:')
     print("window W\t|\tSets the maximum receiver's window size")

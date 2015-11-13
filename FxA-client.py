@@ -1,22 +1,60 @@
 import random
 import socket
 import struct
+from threading import Timer
 import sys
 
 
-seq_num = random.randint(0, 2**32-1)
+seq_num = 0
 ack_num = 0
 window_size = 0
+buff_size = 1024
 
+# TODO: Pack Header '!LLHLBLH'
+
+# checksum functions needed for calculation checksum
+def checksum(msg):
+    s = 0
+
+    # loop taking 2 characters at a time
+    for i in range(0, len(msg), 2):
+        w = ord(msg[i]) + (ord(msg[i+1]) << 8 )
+        s += w
+
+    s = (s >> 16) + (s & 0xffff)
+    s += s >> 16
+
+    #complement and mask to 4 byte short
+    s = ~s & 0xffff
+
+    return s
 
 def send(seq_num, ack_num, window_size, ack, syn, fin, nack, ip_address, port):
     pass
 
 
+def connect_timeout(args):
+    pass
+
+
 def connect(client_port, ip_address, net_emu_port):
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.bind(('', client_port))
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    except socket.error:
+        print 'Failed to create socket'
+        sys.exit()
+
+    try:
+        s.bind(('', client_port))
+    except socket.error, msg:
+        print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
+        sys.exit()
+
     send(seq_num, ack_num, window_size, 0, 1, 0, 0, ip_address, net_emu_port)
+    num_timeouts = 0
+    timer = Timer(10, connect_timeout)
+    while True:
+        data, addr = s.recvfrom(buff_size)
     return False
 
 
@@ -31,7 +69,7 @@ def main(argv):
     is_connected = False
     x = ''
     state = State.CLOSED
-
+    seq_num = random.randint(0, 2**32-1)
 
     try:
         client_port = int(client_port)
