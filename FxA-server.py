@@ -1,7 +1,7 @@
 import socket
 import sys
 from threading import Timer
-
+import threading
 
 def main(argv):
     if len(argv) != 3:
@@ -11,19 +11,21 @@ def main(argv):
     server_port = argv[0]
     ip_address = argv[1]
     net_emu_port = argv[2]
-    x = ''
     window = 0
 
+    # Check Port is an int
     try:
         server_port = int(server_port)
     except ValueError:
         print('Invalid server port number %s' % argv[0])
         sys.exit(1)
 
+    # Check server port is even for correct interaction with NetEmu
     if server_port % 2 == 0:
         print('Server port number: %d was not an odd number' % server_port)
         sys.exit(1)
 
+    # Check IP address is in correct notation
     try:
         ip_address = socket.inet_aton(ip_address)
     except socket.error:
@@ -31,39 +33,53 @@ def main(argv):
         sys.exit(1)
         # TODO check if port is open!
 
+    # Check port number is an int
     try:
         net_emu_port = int(net_emu_port)
     except ValueError:
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
 
+    # Create socket and bind to initialize server
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(('', server_port))
 
+    # Server Command Instructions
     print('Command Options:')
     print("window W\t|\tSets the maximum receiver's window size")
     print("terminate\t|\tShut-down FxA-Server gracefully\n")
 
-    while x != 'terminate':
-        x = raw_input('Please enter command:')
-        if x == 'terminate':
+    # Check for user input
+    user_input(window)
+
+
+
+
+def user_input(window):
+    command_input = ''
+
+    # Loop for commands from server user
+    while command_input != 'terminate':
+        command_input = str(raw_input('Please enter command:'))
+        if command_input == 'terminate':
             # TODO terminate() call
             break
         else:
-            y = x.split(" ")
-            if y[0] == 'window':
-                if len(y) != 2:
+            parsed_command_input = command_input.split(" ")
+            if parsed_command_input[0] == 'window':
+                if len(parsed_command_input) != 2:
                     print("Invalid command: window requires secondary parameter")
                     continue
                 try:
-                    window = int(y[1])
+                    window = int(parsed_command_input[1])
                 except ValueError:
-                    print('Invalid window size (not a number): %s' % y[1])
+                    print('Invalid window size (not a number): %s' % parsed_command_input[1])
                     continue
                 # TODO window()
                 print('window')
             else:
                 print("Command not recognized")
+
 
 
 def send(param, param1, param2):
