@@ -4,8 +4,8 @@ import threading
 import Queue
 import struct
 from threading import Timer
-
-
+import hashlib
+import random
 
 def main(argv):
 
@@ -14,7 +14,7 @@ def main(argv):
         sys.exit(1)
 
     server_port = argv[0]
-    ip_address = argv[1]
+    server_ip_address = argv[1]
     net_emu_port = argv[2]
 
 
@@ -32,7 +32,8 @@ def main(argv):
 
     # Check IP address is in correct notation
     try:
-        ip_address = socket.inet_aton(ip_address)
+        # TODO check correct format for ip_address; UDP takes string
+        server_ip_address = server_ip_address #socket.inet_aton(ip_address)
     except socket.error:
         print("Invalid IP notation: %s" % argv[1])
         sys.exit(1)
@@ -101,15 +102,15 @@ def recv_packet():
     while True:
         try:
             packet = sock.recvfrom(buff_size)
-            queue.put(packet)
+            process_queue.put(packet)
         except socket.error, msg:
             continue
 
 def proc_packet():
     global window_size
     while True:
-        while not queue.empty():
-            packet = queue.get()
+        while not process_queue.empty():
+            packet = process_queue.get()
             data = packet[0]
             #print len(data)
             rtp_header = struct.unpack('!LLHBLH', data)
@@ -123,7 +124,7 @@ def proc_packet():
                 t_connection.daemon = True
                 t_connection.start()
 
-            sock.sendto(packet[0],packet[1])
+
 
 def unpack_rtpheader(rtp_header):
     seq_num         = rtp_header[0]
@@ -160,17 +161,32 @@ def connection_setup(seq_num, ack_num, ack, syn, fin, nack, ip_address_long, por
 
     # Start new connection to client and send client SYN, ACK, CHALLENGE
     if syn == True and ack == False:
-        pass
+        client = Connection(ip_address_long, port)
+        clientList.append(client)
+        send(seq_num, ack_num, 1, 1, 0, 0, ip_address_long, port)
 
+
+        #sock.sendto(packet[0],packet[1])
     # Receive response to challenge and send client ACK
     elif syn == True and ack == True:
         pass
 
+def create_hash(random_int):
+    random_string = str(random_int)
+    hash = hashlib.sha224(random_string).hexdigest()
 
+    return hash
 
+def send(seq_num, ack_num, ack, syn, fin, nack, ip_address_long, port):
+    global window_size
 
-def send(param, param1, param2):
-    pass
+    flags = pack_bits(ack, syn, fin, nack)
+    ip_address_long = struct.unpack("!L", socket.inet_aton(ip_address))[0]
+    print ip_address_long
+    # TODO Need checksum()
+    rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, window_size, flags, ip_address_long, port)
+    addr = ip_address, port
+    sock.sendto(rtp_header, addr)
 
 
 def timeout(args):
@@ -193,6 +209,9 @@ class Connection:
         self.sender_port = sender_port
         self.timer = Timer(10, timeout)
         self.timer.start()
+        self.random_num = random.randint(0,2**64-1)
+        self.hash = create_hash(self.random_num)
+        self.hashCheck = create_hash(self.random_num % 3)
 
     def update_on_receive(self, syn, ack, fin):
         self.timer.cancel()
@@ -256,9 +275,9 @@ if __name__ == "__main__":
     buff_size = 1024
     window_size = 0
     terminate = False
-    queue = Queue.Queue(maxsize=15000)
+    process_queue = Queue.Queue(maxsize=15000)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     t_term = threading.Event()
-
+    clientList = []
 
     main(sys.argv[1:])

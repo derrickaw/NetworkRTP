@@ -33,6 +33,7 @@ def checksum(msg):
 def send(ack, syn, fin, nack, ip_address, port):
     flags = pack_bits(ack, syn, fin, nack)
     ip_address_long = struct.unpack("!L", socket.inet_aton(ip_address))[0]
+    print ip_address_long
     # TODO Need checksum()
     rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, window_size, flags, ip_address_long, port)
     addr = ip_address, port
@@ -98,7 +99,7 @@ def main(argv):
     ip_address = argv[1]
     net_emu_port = argv[2]
     is_connected = False
-    x = ''
+    command_input = ''
     state = State.CLOSED
     seq_num = random.randint(0, 2**32-1)
 
@@ -137,19 +138,19 @@ def main(argv):
     print("window W\t|\tSets the maximum receiver's window size")
     print("disconnect\t|\tDisconnect from the FxA-server\n")
 
-    while x != 'disconnect':
-        x = raw_input('Please enter command:')
-        if x == 'connect' and is_connected == False:
+    while command_input != 'disconnect':
+        command_input = raw_input('Please enter command:')
+        if command_input == 'connect' and is_connected == False:
             is_connected = connect(client_port, ip_address, net_emu_port)
-        elif x == 'connect' and is_connected == True:
+        elif command_input == 'connect' and is_connected == True:
             print ("Client already connected to server")
-        elif x == 'disconnect':
+        elif command_input == 'disconnect':
             # TODO disconnect() call
             break
         else:
-            y = x.split(" ")
-            if y[0] == 'get':
-                if len(y) != 2:
+            command_input_split = command_input.split(" ")
+            if command_input_split[0] == 'get':
+                if len(command_input_split) != 2:
                     print("Invalid command: get requires secondary parameter")
                     continue
                 if is_connected:
@@ -157,8 +158,8 @@ def main(argv):
                     print('get')
                 else:
                     print('get not valid without existing connection')
-            elif y[0] == 'post':
-                if len(y) != 2:
+            elif command_input_split[0] == 'post':
+                if len(command_input_split) != 2:
                     print("Invalid command: post requires secondary parameter")
                     continue
                 if is_connected:
@@ -166,14 +167,14 @@ def main(argv):
                     print('post')
                 else:
                     print('post not valid without existing connection')
-            elif y[0] == 'window':
-                if len(y) != 2:
+            elif command_input_split[0] == 'window':
+                if len(command_input_split) != 2:
                     print("Invalid command: window requires secondary parameter")
                     continue
                 try:
-                    window_size = int(y[1])
+                    window_size = int(command_input_split[1])
                 except ValueError:
-                    print('Invalid window size (not a number): %s' % y[1])
+                    print('Invalid window size (not a number): %s' % command_input_split[1])
                     continue
                 # TODO window()
                 print('window')
