@@ -3,11 +3,12 @@ import socket
 import struct
 from threading import Timer
 import sys
+import binascii
 
 
-seq_num = 0
-ack_num = 0
-window_size = 0
+seq_num = 5
+ack_num = 3
+window_size = 1
 buff_size = 1024
 
 # TODO: Pack Header '!LLHLBLH'
@@ -29,33 +30,45 @@ def checksum(msg):
 
     return s
 
-def send(seq_num, ack_num, window_size, ack, syn, fin, nack, ip_address, port):
-    pass
+def send(ack, syn, fin, nack, ip_address, port):
+    flags = pack_bits(ack,syn,fin,nack)
+    ip_address_long = struct.unpack("!L", socket.inet_aton(ip_address))[0]
+    #ip_address_old = struct.pack("!L", ip_address_long)
+    rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, window_size, flags, ip_address_long, port)
+    addr = ip_address, port
+    sock.sendto(rtp_header, addr)
 
+
+
+def pack_bits(ack, syn, fin, nack):
+
+    bit_string = str(ack) + str(syn) + str(fin) + str(nack)
+    i = len(bit_string)
+    while i < 8:
+        bit_string = '0' + bit_string
+        i = len(bit_string)
+
+    bit_string = int(bit_string, 2)
+    return bit_string
 
 def connect_timeout(args):
     pass
 
 
 def connect(client_port, ip_address, net_emu_port):
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    except socket.error:
-        print 'Failed to create socket'
-        sys.exit()
 
     try:
-        s.bind(('', client_port))
+        sock.bind(('', client_port))
     except socket.error, msg:
         print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
         sys.exit()
 
-    send(seq_num, ack_num, window_size, 0, 1, 0, 0, ip_address, net_emu_port)
+    send(0, 1, 0, 0, ip_address, net_emu_port)
     num_timeouts = 0
     timer = Timer(10, connect_timeout)
-    while True:
-        data, addr = s.recvfrom(buff_size)
-    return False
+    #while True:
+    #    data, addr = sock.recvfrom(buff_size)
+    return True
 
 
 def main(argv):
@@ -82,7 +95,8 @@ def main(argv):
         sys.exit(1)
 
     try:
-        ip_address = socket.inet_aton(ip_address)
+        # TODO check correct format for ip_address; UDP takes string
+        ip_address = ip_address#socket.inet_aton(ip_address)
     except socket.error:
         print("Invalid IP notation: %s" % argv[1])
         sys.exit(1)
@@ -94,6 +108,10 @@ def main(argv):
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
 
+
+
+
+
     print('Command Options:')
     print('connect\t\t|\tConnects to the FxA-server')
     print('get F\t\t|\tRetrieve file F from FxA-server')
@@ -103,8 +121,10 @@ def main(argv):
 
     while x != 'disconnect':
         x = raw_input('Please enter command:')
-        if x == 'connect':
+        if x == 'connect' and is_connected == False:
             is_connected = connect(client_port, ip_address, net_emu_port)
+        elif x == 'connect' and is_connected == True:
+            print ("Client already connected to server")
         elif x == 'disconnect':
             # TODO disconnect() call
             break
@@ -161,4 +181,11 @@ class State:
 
 
 if __name__ == "__main__":
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    except socket.error:
+        print 'Failed to create socket'
+        sys.exit()
+
     main(sys.argv[1:])

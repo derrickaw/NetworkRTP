@@ -1,9 +1,9 @@
 import socket
 import sys
-from threading import Timer
 import threading
 import Queue
-
+import struct
+from threading import Timer
 
 
 
@@ -71,19 +71,28 @@ def main(argv):
 
 
 def recv_packet():
-    while not t_term.is_set():
+    while True:
         try:
             packet = sock.recvfrom(buff_size)
-            #data = packet[0]
             queue.put(packet)
         except socket.error, msg:
             continue
 
 def proc_packet():
-    while not t_term.is_set():
+    while True:
         while not queue.empty():
             packet = queue.get()
+            data = packet[0]
+            #print len(data)
+            data = struct.unpack('!LLHBLH', data)
+            #print data
+
             sock.sendto(packet[0],packet[1])
+
+
+
+def connection_setup():
+    pass
 
 
 
