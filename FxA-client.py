@@ -31,25 +31,42 @@ def checksum(msg):
     return s
 
 def send(ack, syn, fin, nack, ip_address, port):
-    flags = pack_bits(ack,syn,fin,nack)
+    flags = pack_bits(ack, syn, fin, nack)
     ip_address_long = struct.unpack("!L", socket.inet_aton(ip_address))[0]
-    #ip_address_old = struct.pack("!L", ip_address_long)
+    # TODO Need checksum()
     rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, window_size, flags, ip_address_long, port)
     addr = ip_address, port
     sock.sendto(rtp_header, addr)
 
+def recv():
+    packet = sock.recvfrom(buff_size)
+    data = packet[0]
+    rtp_header = struct.unpack('!LLHBLH',data)
+    flags = rtp_header[3]
+    ack, syn, fin, nack = unpack_bits(flags)
+
+
+    #ip_address_old = struct.pack("!L", ip_address_long)
 
 
 def pack_bits(ack, syn, fin, nack):
 
     bit_string = str(ack) + str(syn) + str(fin) + str(nack)
-    i = len(bit_string)
-    while i < 8:
-        bit_string = '0' + bit_string
-        i = len(bit_string)
-
+    bit_string = '0000' + bit_string # If you augment, it won't be correct, unless we want to put the flags in higher
     bit_string = int(bit_string, 2)
+
     return bit_string
+
+def unpack_bits(bit_string):
+
+    bit_string = format(bit_string, '08b')
+    ack = int(bit_string[4])
+    syn = int(bit_string[5])
+    fin = int(bit_string[6])
+    nack = int(bit_string[7])
+
+    return ack, syn, fin, nack
+
 
 def connect_timeout(args):
     pass
@@ -64,6 +81,7 @@ def connect(client_port, ip_address, net_emu_port):
         sys.exit()
 
     send(0, 1, 0, 0, ip_address, net_emu_port)
+    recv()
     num_timeouts = 0
     timer = Timer(10, connect_timeout)
     #while True:
