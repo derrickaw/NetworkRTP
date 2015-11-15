@@ -2,16 +2,21 @@ import socket
 import sys
 from threading import Timer
 import threading
+import Queue
+
+
+
 
 def main(argv):
+
     if len(argv) != 3:
-        print("Correct usage: FxA-Client X A P")
+        print("Correct usage: FxA-Server X A P")
         sys.exit(1)
 
     server_port = argv[0]
     ip_address = argv[1]
     net_emu_port = argv[2]
-    window = 0
+
 
     # Check Port is an int
     try:
@@ -40,23 +45,57 @@ def main(argv):
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
 
-    # Create socket and bind to initialize server
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.bind(('', server_port))
+    # Bind to server port
+    sock.bind(('', server_port))
+
+    # Check for user input, start packet collection, and start processing queue
+    try:
+        t_user = threading.Thread(target=user_input,args=())
+        t_user.start()
+        t_recv = threading.Thread(target=recv_packet,args=())
+        t_recv.daemon = True
+        t_recv.start()
+        t_proc = threading.Thread(target=proc_packet,args=())
+        t_proc.daemon = True
+        t_proc.start()
+
+    except:
+        print "Error"
+
+    t_user.join()
+    sock.close()
+
+    #t_term.set()
+
+
+
+
+def recv_packet():
+    while not t_term.is_set():
+        try:
+            packet = sock.recvfrom(buff_size)
+            #data = packet[0]
+            queue.put(packet)
+        except socket.error, msg:
+            continue
+
+def proc_packet():
+    while not t_term.is_set():
+        while not queue.empty():
+            packet = queue.get()
+            sock.sendto(packet[0],packet[1])
+
+
+
+def user_input():
+    global window_size
+    global terminate
+    command_input = ''
 
     # Server Command Instructions
     print('Command Options:')
     print("window W\t|\tSets the maximum receiver's window size")
     print("terminate\t|\tShut-down FxA-Server gracefully\n")
-
-    # Check for user input
-    user_input(window)
-
-
-
-
-def user_input(window):
-    command_input = ''
 
     # Loop for commands from server user
     while command_input != 'terminate':
@@ -71,7 +110,7 @@ def user_input(window):
                     print("Invalid command: window requires secondary parameter")
                     continue
                 try:
-                    window = int(parsed_command_input[1])
+                    window_size = int(parsed_command_input[1])
                 except ValueError:
                     print('Invalid window size (not a number): %s' % parsed_command_input[1])
                     continue
@@ -79,6 +118,8 @@ def user_input(window):
                 print('window')
             else:
                 print("Command not recognized")
+    terminate = True
+    print("Server closing")
 
 
 
@@ -165,4 +206,13 @@ class State:
 
 
 if __name__ == "__main__":
+    # Global variables
+    buff_size = 1024
+    window_size = 0
+    terminate = False
+    queue = Queue.Queue(maxsize=15000)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    t_term = threading.Event()
+
+
     main(sys.argv[1:])
