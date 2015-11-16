@@ -1,11 +1,13 @@
+import hashlib
+import random
 import socket
+import struct
 import sys
 import threading
 import Queue
-import struct
 from threading import Timer
-import hashlib
-import random
+
+
 
 def main(argv):
     global server_port
@@ -22,7 +24,6 @@ def main(argv):
     net_emu_ip_address = argv[1]
     net_emu_port = argv[2]
 
-
     # Check Port is an int
     try:
         server_port = int(server_port)
@@ -37,8 +38,8 @@ def main(argv):
 
     # Check IP address is in correct notation
     try:
-        # TODO check correct format for ip_address; UDP takes string
-        net_emu_ip_address = net_emu_ip_address #socket.inet_aton(ip_address)
+        # TODO double check all IP addresses are caught
+        socket.inet_aton(net_emu_ip_address)
     except socket.error:
         print("Invalid IP notation: %s" % argv[1])
         sys.exit(1)
@@ -120,29 +121,44 @@ def proc_packet():
             packet = process_queue.get()
             data = packet[0]
             #print len(data)
-            rtp_header = struct.unpack('!LLHBLH', data)
-            seq_num, ack_num, client_window_size, flags, client_ip_address_long, client_port = unpack_rtpheader(rtp_header)
-            ack, syn, fin, nack = unpack_bits(flags)
+
+            seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = \
+                unpack_rtpheader(data)
 
             # Connection setup
             if (syn and not ack) or (syn and ack):
                 t_connection = threading.Thread(target=connection_setup,args=(seq_num, ack_num, client_window_size,
-                    ack, syn, fin, nack, client_ip_address_long, client_port))
+                                                ack, syn, fin, nack, client_ip_address_long, client_port))
                 t_connection.daemon = True
                 t_connection.start()
 
+            # TODO How will we tell the server that we want to pull down or upload a file?
+
+
+
+
+def pack_rtpheader(seq_num, ack_num, ack, syn, fin, nack):
+
+    flags = pack_bits(ack, syn, fin, nack)
+    print flags
+    rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, server_window_size, flags, SERVER_IP_ADDRESS_LONG,
+                             server_port)
+
+    return rtp_header
 
 
 def unpack_rtpheader(rtp_header):
+    rtp_header = struct.unpack('!LLHBLH', rtp_header)
 
     seq_num = rtp_header[0]
     ack_num = rtp_header[1]
     client_window_size = rtp_header[2]
     flags = rtp_header[3]
-    ip_address_long = rtp_header[4]
-    port = rtp_header[5]
+    ack, syn, fin, nack = unpack_bits(flags)
+    client_ip_address_long = rtp_header[4]
+    client_port = rtp_header[5]
 
-    return seq_num, ack_num, client_window_size, flags, ip_address_long, port
+    return seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port
 
 
 def pack_bits(ack, syn, fin, nack):
@@ -165,30 +181,27 @@ def unpack_bits(bit_string):
 
 
 def connection_setup(seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port):
-    global window_size
+
     packed_ip = struct.pack('!L', client_ip_address_long)
     client_ip_address = socket.inet_ntoa(packed_ip)         # TODO do we want to store IP or IP long?
 
     # Check client list for existing connection
-    client_location = check_client_list(client_ip_address, client_port)
+    client = check_client_list(client_ip_address, client_port)
 
     # Start new connection to client and send client SYN, ACK, CHALLENGE
-    if syn and not ack and not fin and client_location is None:
-        client = Connection(client_ip_address, client_port)
+    if syn and not ack and not fin and client is None:
+        client = Connection(client_ip_address, client_port, seq_num)
         clientList.append(client)
         send(seq_num, ack_num, 1, 1, 0, 0) # TODO
+    # Complete 4-way handshake by by receiving challenge and sending ACK
     else:
-        pass  # TODO
+        client.update_on_receive(syn, ack, fin)
 
-        #sock.sendto(packet[0],packet[1])
-    # Receive response to challenge and send client ACK
-    #elif syn and ack:
-    #    pass
 
 def check_client_list(client_ip_address, client_port):
     for i in range(len(clientList)):
         if clientList[i].get_sender_ip() == client_ip_address and clientList[i].get_sender_port() == client_port:
-            return i
+            return clientList[i]
     return None
 
 def create_hash(random_int):
@@ -199,11 +212,9 @@ def create_hash(random_int):
 
 def send(seq_num, ack_num, ack, syn, fin, nack):
 
-    flags = pack_bits(ack, syn, fin, nack)
-
     # TODO Need checksum()
+    rtp_header = pack_rtpheader(seq_num, ack_num, ack, syn, fin, nack)
 
-    rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, window_size, flags, SERVER_IP_ADDRESS_LONG, server_port)
     sock.sendto(rtp_header, net_emu_addr)
 
 
@@ -211,33 +222,61 @@ def timeout(args):
     pass
 
 
-def acknowledge():
-    pass
+def acknowledge(seq_num, ack_num, ack, syn, fin, nack):
+    rtp_header = pack_rtpheader(seq_num, ack_num, ack, syn, fin, nack)
+    sock.sendto(rtp_header, net_emu_addr)
 
 
 def checkhash():
     pass
 
 
+def checksum(msg):
+    s = 0
+
+    # loop taking 2 characters at a time
+    for i in range(0, len(msg), 2):
+        w = ord(msg[i]) + (ord(msg[i+1]) << 8 )
+        s += w
+
+    s = (s >> 16) + (s & 0xffff)
+    s += s >> 16
+
+    #complement and mask to 4 byte short
+    s = ~s & 0xffff
+
+    return s
+
 class Connection:
 
-    def __init__(self, sender_ip, sender_port):
+    def __init__(self, client_ip, client_port, seq_num):
         self.state = State.SYN_RECEIVED
-        self.sender_ip = sender_ip
-        self.sender_port = sender_port
+        self.client_ip = client_ip
+        self.client_port = client_port
         self.timer = Timer(10, timeout)
         self.timer.start()
         self.random_num = random.randint(0,2**64-1)
         self.hash = create_hash(self.random_num)
         self.hashCheck = create_hash(self.random_num % 3)
-        # self.seq_num
-        # self.ack_num
+        self.seq_num = seq_num
 
     def get_sender_ip(self):
         return self.sender_ip
 
     def get_sender_port(self):
         return self.sender_port
+
+    def get_hash(self):
+        return self.hash
+
+    def get_hashCheck(self):
+        return self.hashCheck
+
+    def get_seq_num(self):
+        return self.seq_num
+
+    def increase_seq_num(self, amount):
+        self.seq_num += amount
 
     def update_on_receive(self, syn, ack, fin):
         self.timer.cancel()
@@ -299,7 +338,7 @@ class State:
 if __name__ == "__main__":
     # Global variables
     buff_size = 1024
-    window_size = 0
+    server_window_size = 0
     terminate = False
     process_queue = Queue.Queue(maxsize=15000)
     #t_term = threading.Event()

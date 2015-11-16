@@ -1,10 +1,10 @@
+import hashlib
 import random
 import socket
 import struct
-from threading import Timer
 import sys
-import binascii
-
+import threading
+from threading import Timer
 
 # TODO: Pack Header '!LLHLBLH'
 
@@ -13,7 +13,7 @@ def main(argv):
     global net_emu_ip_address
     global net_emu_port
     global net_emu_addr
-    global window_size
+    global server_window_size
 
     if len(argv) != 3:
         print("Correct usage: FxA-Client X A P")
@@ -24,8 +24,8 @@ def main(argv):
     net_emu_port = argv[2]
     is_connected = False
     command_input = ''
-    state = State.CLOSED
-    seq_num = random.randint(0, 2**32-1)
+    client_state = State.CLOSED
+    client_seq_num = random.randint(0, 2**32-1)
 
     # Check that entered client port is an integer
     try:
@@ -41,8 +41,8 @@ def main(argv):
 
     # Check that entered NetEmu IP address is in correct format
     try:
-        # TODO check correct format for ip_address; UDP takes string
-        net_emu_ip_address = net_emu_ip_address#socket.inet_aton(ip_address)
+        # TODO double check all IP addresses are caught
+        socket.inet_aton(net_emu_ip_address)
     except socket.error:
         print("Invalid IP notation: %s" % argv[1])
         sys.exit(1)
@@ -69,7 +69,7 @@ def main(argv):
     while command_input != 'disconnect':
         command_input = raw_input('Please enter command:')
         if command_input == 'connect' and is_connected == False:
-            is_connected = connect(client_port, net_emu_ip_address, net_emu_port)
+            is_connected = connect(client_state, client_seq_num, client_port, net_emu_ip_address, net_emu_port)
         elif command_input == 'connect' and is_connected == True:
             print ("Client already connected to server")
         elif command_input == 'disconnect':
@@ -130,19 +130,45 @@ def send(ack, syn, fin, nack):
     flags = pack_bits(ack, syn, fin, nack)
 
     # TODO Need checksum()
-    rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, window_size, flags, CLIENT_IP_ADDRESS_LONG, client_port)
-
+    rtp_header = pack_rtpheader(seq_num, ack_num, ack, syn, fin, nack)
     sock.sendto(rtp_header, net_emu_addr)
 
 def recv():
     packet = sock.recvfrom(buff_size)
     data = packet[0]
-    rtp_header = struct.unpack('!LLHBLH',data)
-    flags = rtp_header[3]
-    ack, syn, fin, nack = unpack_bits(flags)
+
+    seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = \
+        unpack_rtpheader(data)
+
+
     print ack, syn, fin, nack
 
     #ip_address_old = struct.pack("!L", ip_address_long)
+
+
+def pack_rtpheader(seq_num, ack_num, ack, syn, fin, nack):
+
+    flags = pack_bits(ack, syn, fin, nack)
+    rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, client_window_size, flags, CLIENT_IP_ADDRESS_LONG,
+                             client_port)
+
+    return rtp_header
+
+
+def unpack_rtpheader(rtp_header):
+    rtp_header = struct.unpack('!LLHBLH', rtp_header)
+
+    seq_num = rtp_header[0]
+    ack_num = rtp_header[1]
+    server_window_size = rtp_header[2]
+    flags = rtp_header[3]
+    print flags
+
+    ack, syn, fin, nack = unpack_bits(flags)
+    server_ip_address_long = rtp_header[4]
+    server_port = rtp_header[5]
+
+    return seq_num, ack_num, server_window_size, ack, syn, fin, nack, server_ip_address_long, server_port
 
 
 def pack_bits(ack, syn, fin, nack):
@@ -168,14 +194,15 @@ def connect_timeout(args):
     pass
 
 
-def connect(client_port, net_emu_ip_address, net_emu_port):
+def connect(client_state, client_seq_num, client_port, net_emu_ip_address, net_emu_port):
 
     try:
         sock.bind(('', client_port))
     except socket.error, msg:
         print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
         sys.exit()
-    print socket.gethostbyname(socket.gethostname())
+    #print socket.gethostbyname(socket.gethostname())
+
 
     send(0, 1, 0, 0)
     recv()
@@ -183,6 +210,7 @@ def connect(client_port, net_emu_ip_address, net_emu_port):
     timer = Timer(10, connect_timeout)
     #while True:
     #    data, addr = sock.recvfrom(buff_size)
+
     return True
 
 
@@ -209,7 +237,7 @@ if __name__ == "__main__":
 
     seq_num = 5
     ack_num = 3
-    window_size = 1
+    client_window_size = 1
     buff_size = 1024
     client_port = ''
     CLIENT_IP_ADDRESS = socket.gethostbyname(socket.gethostname())
