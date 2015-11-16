@@ -8,13 +8,18 @@ import hashlib
 import random
 
 def main(argv):
+    global server_port
+    global net_emu_ip_address
+    global net_emu_port
+    global net_emu_addr
 
     if len(argv) != 3:
         print("Correct usage: FxA-Server X A P")
         sys.exit(1)
 
+    # Save user input
     server_port = argv[0]
-    server_ip_address = argv[1]
+    net_emu_ip_address = argv[1]
     net_emu_port = argv[2]
 
 
@@ -33,7 +38,7 @@ def main(argv):
     # Check IP address is in correct notation
     try:
         # TODO check correct format for ip_address; UDP takes string
-        server_ip_address = server_ip_address #socket.inet_aton(ip_address)
+        net_emu_ip_address = net_emu_ip_address #socket.inet_aton(ip_address)
     except socket.error:
         print("Invalid IP notation: %s" % argv[1])
         sys.exit(1)
@@ -45,6 +50,9 @@ def main(argv):
     except ValueError:
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
+
+    # Create address for sending to NetEmu
+    net_emu_addr = net_emu_ip_address, net_emu_port
 
     # Bind to server port
     sock.bind(('', server_port))
@@ -62,7 +70,7 @@ def main(argv):
 
 
 
-    # Server Command Instructions
+    # Setup for Server Command Instructions
     print('Command Options:')
     print("window W\t|\tSets the maximum receiver's window size")
     print("terminate\t|\tShut-down FxA-Server gracefully\n")
@@ -114,27 +122,28 @@ def proc_packet():
             data = packet[0]
             #print len(data)
             rtp_header = struct.unpack('!LLHBLH', data)
-            seq_num, ack_num, window_size, flags, ip_address_long, port = unpack_rtpheader(rtp_header)
+            seq_num, ack_num, window_size, flags, client_ip_address_long, client_port = unpack_rtpheader(rtp_header)
             ack, syn, fin, nack = unpack_bits(flags)
 
             # Connection setup
             if (syn == True and ack == False) or (syn == True and ack == True):
                 t_connection = threading.Thread(target=connection_setup,args=(seq_num, ack_num,
-                    ack, syn, fin, nack, ip_address_long, port))
+                    ack, syn, fin, nack, client_ip_address_long, client_port))
                 t_connection.daemon = True
                 t_connection.start()
 
 
 
 def unpack_rtpheader(rtp_header):
-    seq_num         = rtp_header[0]
-    ack_num         = rtp_header[1]
-    window_size     = rtp_header[2]
-    flags           = rtp_header[3]
-    ip_address_long = rtp_header[4]
-    port            = rtp_header[5]
 
-    return seq_num, ack_num, window_size, flags, ip_address_long, port
+    seq_num = rtp_header[0]
+    ack_num = rtp_header[1]
+    client_window_size = rtp_header[2]
+    flags = rtp_header[3]
+    ip_address_long = rtp_header[4]
+    port = rtp_header[5]
+
+    return seq_num, ack_num, client_window_size, flags, ip_address_long, port
 
 
 def pack_bits(ack, syn, fin, nack):
@@ -156,14 +165,14 @@ def unpack_bits(bit_string):
     return ack, syn, fin, nack
 
 
-def connection_setup(seq_num, ack_num, ack, syn, fin, nack, ip_address_long, port):
+def connection_setup(seq_num, ack_num, ack, syn, fin, nack, client_ip_address_long, client_port):
     global window_size
 
     # Start new connection to client and send client SYN, ACK, CHALLENGE
     if syn == True and ack == False:
-        client = Connection(ip_address_long, port)
+        client = Connection(client_ip_address_long, client_port)
         clientList.append(client)
-        send(seq_num, ack_num, 1, 1, 0, 0, ip_address_long, port)
+        send(seq_num, ack_num, 1, 1, 0, 0)
 
 
         #sock.sendto(packet[0],packet[1])
@@ -177,16 +186,14 @@ def create_hash(random_int):
 
     return hash
 
-def send(seq_num, ack_num, ack, syn, fin, nack, ip_address_long, port):
-    global window_size
+def send(seq_num, ack_num, ack, syn, fin, nack):
 
     flags = pack_bits(ack, syn, fin, nack)
-    ip_address_long = struct.unpack("!L", socket.inet_aton(ip_address))[0]
-    print ip_address_long
+
     # TODO Need checksum()
-    rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, window_size, flags, ip_address_long, port)
-    addr = ip_address, port
-    sock.sendto(rtp_header, addr)
+
+    rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, window_size, flags, SERVER_IP_ADDRESS_LONG, server_port)
+    sock.sendto(rtp_header, net_emu_addr)
 
 
 def timeout(args):
@@ -276,8 +283,21 @@ if __name__ == "__main__":
     window_size = 0
     terminate = False
     process_queue = Queue.Queue(maxsize=15000)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    t_term = threading.Event()
+    #t_term = threading.Event()
     clientList = []
+    server_port = ''
+    SERVER_IP_ADDRESS = socket.gethostbyname(socket.gethostname())
+    SERVER_IP_ADDRESS_LONG = struct.unpack("!L", socket.inet_aton(SERVER_IP_ADDRESS))[0]
+    net_emu_ip_address = ''
+    net_emu_ip_address_long = ''
+    net_emu_port = ''
+    net_emu_addr = ''
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    except socket.error:
+        print 'Failed to create socket'
+        sys.exit()
+
 
     main(sys.argv[1:])

@@ -6,131 +6,58 @@ import sys
 import binascii
 
 
-seq_num = 5
-ack_num = 3
-window_size = 1
-buff_size = 1024
-
 # TODO: Pack Header '!LLHLBLH'
 
-# checksum functions needed for calculation checksum
-def checksum(msg):
-    s = 0
-
-    # loop taking 2 characters at a time
-    for i in range(0, len(msg), 2):
-        w = ord(msg[i]) + (ord(msg[i+1]) << 8 )
-        s += w
-
-    s = (s >> 16) + (s & 0xffff)
-    s += s >> 16
-
-    #complement and mask to 4 byte short
-    s = ~s & 0xffff
-
-    return s
-
-def send(ack, syn, fin, nack, ip_address, port):
-    flags = pack_bits(ack, syn, fin, nack)
-    ip_address_long = struct.unpack("!L", socket.inet_aton(ip_address))[0]
-    print ip_address_long
-    # TODO Need checksum()
-    rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, window_size, flags, ip_address_long, port)
-    addr = ip_address, port
-    sock.sendto(rtp_header, addr)
-
-def recv():
-    packet = sock.recvfrom(buff_size)
-    data = packet[0]
-    rtp_header = struct.unpack('!LLHBLH',data)
-    flags = rtp_header[3]
-    ack, syn, fin, nack = unpack_bits(flags)
-
-
-    #ip_address_old = struct.pack("!L", ip_address_long)
-
-
-def pack_bits(ack, syn, fin, nack):
-
-    bit_string = str(ack) + str(syn) + str(fin) + str(nack)
-    bit_string = '0000' + bit_string # If you augment, it won't be correct, unless we want to put the flags in higher
-    bit_string = int(bit_string, 2)
-
-    return bit_string
-
-def unpack_bits(bit_string):
-
-    bit_string = format(bit_string, '08b')
-    ack = int(bit_string[4])
-    syn = int(bit_string[5])
-    fin = int(bit_string[6])
-    nack = int(bit_string[7])
-
-    return ack, syn, fin, nack
-
-
-def connect_timeout(args):
-    pass
-
-
-def connect(client_port, ip_address, net_emu_port):
-
-    try:
-        sock.bind(('', client_port))
-    except socket.error, msg:
-        print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
-        sys.exit()
-
-    send(0, 1, 0, 0, ip_address, net_emu_port)
-    recv()
-    num_timeouts = 0
-    timer = Timer(10, connect_timeout)
-    #while True:
-    #    data, addr = sock.recvfrom(buff_size)
-    return True
-
-
 def main(argv):
+    global client_port
+    global net_emu_ip_address
+    global net_emu_port
+    global net_emu_addr
+
     if len(argv) != 3:
         print("Correct usage: FxA-Client X A P")
         sys.exit(1)
 
     client_port = argv[0]
-    ip_address = argv[1]
+    net_emu_ip_address = argv[1]
     net_emu_port = argv[2]
     is_connected = False
     command_input = ''
     state = State.CLOSED
     seq_num = random.randint(0, 2**32-1)
 
+    # Check that entered client port is an integer
     try:
         client_port = int(client_port)
     except ValueError:
         print('Invalid client port number %s' % argv[0])
         sys.exit(1)
 
+    # Check that client port is odd so that NetEmu can tell the difference between client and server
     if client_port % 2 == 1:
         print('Client port number: %d was not even number' % client_port)
         sys.exit(1)
 
+    # Check that entered NetEmu IP address is in correct format
     try:
         # TODO check correct format for ip_address; UDP takes string
-        ip_address = ip_address#socket.inet_aton(ip_address)
+        net_emu_ip_address = net_emu_ip_address#socket.inet_aton(ip_address)
     except socket.error:
         print("Invalid IP notation: %s" % argv[1])
         sys.exit(1)
         # TODO check if port is open!
 
+    # Check that entered NetEmu port is an integer
     try:
         net_emu_port = int(net_emu_port)
     except ValueError:
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
 
+    # Create address for sending to NetEmu
+    net_emu_addr = net_emu_ip_address, net_emu_port
 
-
-
-
+    # Setup for Client Command Instructions
     print('Command Options:')
     print('connect\t\t|\tConnects to the FxA-server')
     print('get F\t\t|\tRetrieve file F from FxA-server')
@@ -141,7 +68,7 @@ def main(argv):
     while command_input != 'disconnect':
         command_input = raw_input('Please enter command:')
         if command_input == 'connect' and is_connected == False:
-            is_connected = connect(client_port, ip_address, net_emu_port)
+            is_connected = connect(client_port, net_emu_ip_address, net_emu_port)
         elif command_input == 'connect' and is_connected == True:
             print ("Client already connected to server")
         elif command_input == 'disconnect':
@@ -182,6 +109,84 @@ def main(argv):
                 print("Command not recognized")
 
 
+def checksum(msg):
+    s = 0
+
+    # loop taking 2 characters at a time
+    for i in range(0, len(msg), 2):
+        w = ord(msg[i]) + (ord(msg[i+1]) << 8 )
+        s += w
+
+    s = (s >> 16) + (s & 0xffff)
+    s += s >> 16
+
+    #complement and mask to 4 byte short
+    s = ~s & 0xffff
+
+    return s
+
+def send(ack, syn, fin, nack):
+    flags = pack_bits(ack, syn, fin, nack)
+
+    # TODO Need checksum()
+    rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, window_size, flags, CLIENT_IP_ADDRESS_LONG, client_port)
+
+    sock.sendto(rtp_header, net_emu_addr)
+
+def recv():
+    packet = sock.recvfrom(buff_size)
+    data = packet[0]
+    rtp_header = struct.unpack('!LLHBLH',data)
+    flags = rtp_header[3]
+    ack, syn, fin, nack = unpack_bits(flags)
+    print ack, syn, fin, nack
+
+    #ip_address_old = struct.pack("!L", ip_address_long)
+
+
+def pack_bits(ack, syn, fin, nack):
+
+    bit_string = str(ack) + str(syn) + str(fin) + str(nack)
+    bit_string = '0000' + bit_string # If you augment, it won't be correct, unless we want to put the flags in higher
+    bit_string = int(bit_string, 2)
+
+    return bit_string
+
+def unpack_bits(bit_string):
+
+    bit_string = format(bit_string, '08b')
+    ack = int(bit_string[4])
+    syn = int(bit_string[5])
+    fin = int(bit_string[6])
+    nack = int(bit_string[7])
+
+    return ack, syn, fin, nack
+
+
+def connect_timeout(args):
+    pass
+
+
+def connect(client_port, net_emu_ip_address, net_emu_port):
+
+    try:
+        sock.bind(('', client_port))
+    except socket.error, msg:
+        print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
+        sys.exit()
+    print socket.gethostbyname(socket.gethostname())
+
+    send(0, 1, 0, 0)
+    recv()
+    num_timeouts = 0
+    timer = Timer(10, connect_timeout)
+    #while True:
+    #    data, addr = sock.recvfrom(buff_size)
+    return True
+
+
+
+
 class State:
     SYN_SENT = 1
     SYN_RECEIVED = 2
@@ -200,6 +205,18 @@ class State:
 
 
 if __name__ == "__main__":
+
+    seq_num = 5
+    ack_num = 3
+    window_size = 1
+    buff_size = 1024
+    client_port = ''
+    CLIENT_IP_ADDRESS = socket.gethostbyname(socket.gethostname())
+    CLIENT_IP_ADDRESS_LONG = struct.unpack("!L", socket.inet_aton(CLIENT_IP_ADDRESS))[0]
+    net_emu_ip_address = ''
+    net_emu_ip_address_long = ''
+    net_emu_port = ''
+    net_emu_addr = ''
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
