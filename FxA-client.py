@@ -13,6 +13,7 @@ def main(argv):
     global net_emu_ip_address
     global net_emu_port
     global net_emu_addr
+    global window_size
 
     if len(argv) != 3:
         print("Correct usage: FxA-Client X A P")

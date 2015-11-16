@@ -115,19 +115,18 @@ def recv_packet():
             continue
 
 def proc_packet():
-    global window_size
     while True:
         while not process_queue.empty():
             packet = process_queue.get()
             data = packet[0]
             #print len(data)
             rtp_header = struct.unpack('!LLHBLH', data)
-            seq_num, ack_num, window_size, flags, client_ip_address_long, client_port = unpack_rtpheader(rtp_header)
+            seq_num, ack_num, client_window_size, flags, client_ip_address_long, client_port = unpack_rtpheader(rtp_header)
             ack, syn, fin, nack = unpack_bits(flags)
 
             # Connection setup
-            if (syn == True and ack == False) or (syn == True and ack == True):
-                t_connection = threading.Thread(target=connection_setup,args=(seq_num, ack_num,
+            if (syn and not ack) or (syn and ack):
+                t_connection = threading.Thread(target=connection_setup,args=(seq_num, ack_num, client_window_size,
                     ack, syn, fin, nack, client_ip_address_long, client_port))
                 t_connection.daemon = True
                 t_connection.start()
@@ -165,20 +164,32 @@ def unpack_bits(bit_string):
     return ack, syn, fin, nack
 
 
-def connection_setup(seq_num, ack_num, ack, syn, fin, nack, client_ip_address_long, client_port):
+def connection_setup(seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port):
     global window_size
+    packed_ip = struct.pack('!L', client_ip_address_long)
+    client_ip_address = socket.inet_ntoa(packed_ip)         # TODO do we want to store IP or IP long?
+
+    # Check client list for existing connection
+    client_location = check_client_list(client_ip_address, client_port)
 
     # Start new connection to client and send client SYN, ACK, CHALLENGE
-    if syn == True and ack == False:
-        client = Connection(client_ip_address_long, client_port)
+    if syn and not ack and not fin and client_location is None:
+        client = Connection(client_ip_address, client_port)
         clientList.append(client)
-        send(seq_num, ack_num, 1, 1, 0, 0)
-
+        send(seq_num, ack_num, 1, 1, 0, 0) # TODO
+    else:
+        pass  # TODO
 
         #sock.sendto(packet[0],packet[1])
     # Receive response to challenge and send client ACK
-    elif syn == True and ack == True:
-        pass
+    #elif syn and ack:
+    #    pass
+
+def check_client_list(client_ip_address, client_port):
+    for i in range(len(clientList)):
+        if clientList[i].get_sender_ip() == client_ip_address and clientList[i].get_sender_port() == client_port:
+            return i
+    return None
 
 def create_hash(random_int):
     random_string = str(random_int)
@@ -219,6 +230,14 @@ class Connection:
         self.random_num = random.randint(0,2**64-1)
         self.hash = create_hash(self.random_num)
         self.hashCheck = create_hash(self.random_num % 3)
+        # self.seq_num
+        # self.ack_num
+
+    def get_sender_ip(self):
+        return self.sender_ip
+
+    def get_sender_port(self):
+        return self.sender_port
 
     def update_on_receive(self, syn, ack, fin):
         self.timer.cancel()
