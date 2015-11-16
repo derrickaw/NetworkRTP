@@ -8,12 +8,15 @@ from threading import Timer
 
 # TODO: Pack Header '!LLHLBLH'
 
+
 def main(argv):
     global client_port
     global net_emu_ip_address
     global net_emu_port
     global net_emu_addr
-    global server_window_size
+    global client_window_size
+    global client_state
+    global client_seq_num
 
     if len(argv) != 3:
         print("Correct usage: FxA-Client X A P")
@@ -24,8 +27,6 @@ def main(argv):
     net_emu_port = argv[2]
     is_connected = False
     command_input = ''
-    client_state = State.CLOSED
-    client_seq_num = random.randint(0, 2**32-1)
 
     # Check that entered client port is an integer
     try:
@@ -69,7 +70,7 @@ def main(argv):
     while command_input != 'disconnect':
         command_input = raw_input('Please enter command:')
         if command_input == 'connect' and is_connected == False:
-            is_connected = connect(client_state, client_seq_num, client_port, net_emu_ip_address, net_emu_port)
+            is_connected = connect()
         elif command_input == 'connect' and is_connected == True:
             print ("Client already connected to server")
         elif command_input == 'disconnect':
@@ -111,6 +112,8 @@ def main(argv):
 
 
 def checksum(msg):
+
+
     s = 0
 
     # loop taking 2 characters at a time
@@ -126,11 +129,10 @@ def checksum(msg):
 
     return s
 
-def send(ack, syn, fin, nack):
-    flags = pack_bits(ack, syn, fin, nack)
 
+def send(ack, syn, fin, nack):
     # TODO Need checksum()
-    rtp_header = pack_rtpheader(seq_num, ack_num, ack, syn, fin, nack)
+    rtp_header = pack_rtpheader(ack, syn, fin, nack)
     sock.sendto(rtp_header, net_emu_addr)
 
 def recv():
@@ -150,12 +152,12 @@ def recv():
     #ip_address_old = struct.pack("!L", ip_address_long)
 
 
-def pack_rtpheader(seq_num, ack_num, ack, syn, fin, nack):
+def pack_rtpheader(ack, syn, fin, nack):
 
     flags = pack_bits(ack, syn, fin, nack)
+    calc_checcksum
     rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, client_window_size, flags, CLIENT_IP_ADDRESS_LONG,
                              client_port)
-
     return rtp_header
 
 
@@ -178,7 +180,7 @@ def unpack_rtpheader(rtp_header):
 def pack_bits(ack, syn, fin, nack):
 
     bit_string = str(ack) + str(syn) + str(fin) + str(nack)
-    bit_string = '0000' + bit_string # If you augment, it won't be correct, unless we want to put the flags in higher
+    bit_string = '0000' + bit_string  # If you augment, it won't be correct, unless we want to put the flags in higher
     bit_string = int(bit_string, 2)
 
     return bit_string
@@ -204,16 +206,13 @@ def create_hash(integer):
     return hash
 
 
-def connect(client_state, client_seq_num, client_port, net_emu_ip_address, net_emu_port):
+def connect():
 
     try:
         sock.bind(('', client_port))
     except socket.error, msg:
         print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
         sys.exit()
-    #print socket.gethostbyname(socket.gethostname())
-
-
     send(0, 1, 0, 0)
     recv()
     num_timeouts = 0
@@ -222,8 +221,6 @@ def connect(client_state, client_seq_num, client_port, net_emu_ip_address, net_e
     #    data, addr = sock.recvfrom(buff_size)
 
     return True
-
-
 
 
 class State:
@@ -256,6 +253,8 @@ if __name__ == "__main__":
     net_emu_ip_address_long = ''
     net_emu_port = ''
     net_emu_addr = ''
+    client_state = State.CLOSED
+    client_seq_num = random.randint(0, 2**32-1)
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
