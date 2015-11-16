@@ -192,7 +192,7 @@ def connection_setup(seq_num, ack_num, client_window_size, ack, syn, fin, nack, 
     if syn and not ack and not fin and client is None:
         client = Connection(client_ip_address, client_port, seq_num)
         clientList.append(client)
-        send(seq_num, ack_num, 1, 1, 0, 0) # TODO
+        send(client, seq_num, ack_num, 1, 1, 0, 0) # TODO
     # Complete 4-way handshake by by receiving challenge and sending ACK
     else:
         client.update_on_receive(syn, ack, fin)
@@ -210,16 +210,24 @@ def create_hash(random_int):
 
     return hash
 
-def send(seq_num, ack_num, ack, syn, fin, nack):
+def send(client, seq_num, ack_num, ack, syn, fin, nack):
 
     # TODO Need checksum()
+    print client.get_hash()
     rtp_header = pack_rtpheader(seq_num, ack_num, ack, syn, fin, nack)
-
-    sock.sendto(rtp_header, net_emu_addr)
+    payload = pack_payload(rtp_header, client.get_hash())
+    sock.sendto(payload, net_emu_addr)
 
 
 def timeout(args):
     pass
+
+def pack_payload(rtp_header, data):
+    payload = rtp_header + data
+    # TODO probably need to do more than this when we actually send the file
+
+    return payload
+
 
 
 def acknowledge(seq_num, ack_num, ack, syn, fin, nack):
@@ -255,9 +263,8 @@ class Connection:
         self.client_port = client_port
         self.timer = Timer(10, timeout)
         self.timer.start()
-        self.random_num = random.randint(0,2**64-1)
-        self.hash = create_hash(self.random_num)
-        self.hashCheck = create_hash(self.random_num % 3)
+        #self.random_num = random.randint(0,2**64-1)
+        self.hash = create_hash(random.randint(0,2**64-1))
         self.seq_num = seq_num
 
     def get_sender_ip(self):
@@ -268,9 +275,6 @@ class Connection:
 
     def get_hash(self):
         return self.hash
-
-    def get_hashCheck(self):
-        return self.hashCheck
 
     def get_seq_num(self):
         return self.seq_num

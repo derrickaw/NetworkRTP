@@ -135,10 +135,14 @@ def send(ack, syn, fin, nack):
 
 def recv():
     packet = sock.recvfrom(buff_size)
-    data = packet[0]
+    payload = packet[0]
 
+    # TODO need to consider when we actually send data and do we need byte ordered data instead of string?
+    rtp_header = payload[0:17]
+    data = payload[17:]
+    print data
     seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = \
-        unpack_rtpheader(data)
+        unpack_rtpheader(rtp_header)
 
 
     print ack, syn, fin, nack
@@ -192,6 +196,12 @@ def unpack_bits(bit_string):
 
 def connect_timeout(args):
     pass
+
+def create_hash(integer):
+    int_string = str(integer)
+    hash = hashlib.sha224(int_string).hexdigest()
+
+    return hash
 
 
 def connect(client_state, client_seq_num, client_port, net_emu_ip_address, net_emu_port):
