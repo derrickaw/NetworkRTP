@@ -143,7 +143,8 @@ def proc_packet():
             payload = packet[21:]
 
             client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
-                client_port = unpack_rtpheader(packet)
+                client_port = unpack_rtpheader(rtp_header)
+
 
             # Check checksum; if good, proceed; otherwise, drop packet and send nack
             if not check_checksum(checksum, packet):
@@ -190,9 +191,6 @@ def send(seq_num, ack_num, ack, syn, fin, nack, payload):
     else:
         packet = rtp_header
     checksum = sum(bytearray(packet))
-    checksum_byte = struct.pack('!L', checksum)
-    checksum_increment = sum(bytearray(checksum_byte))
-    checksum += checksum_increment
     rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
     if payload is not None:
         packet = rtp_header + payload
@@ -212,9 +210,11 @@ def pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack):
 
 
 def check_checksum(checksum, data):
-    print checksum
+
+    packed_checksum = struct.pack('!L',checksum)
     new_checksum = sum(bytearray(data))
-    print new_checksum
+    new_checksum -= sum(bytearray(packed_checksum))
+
     if checksum == new_checksum:
         return True
     else:
@@ -282,6 +282,7 @@ def timeout(args):
 
 
 def acknowledge(ack_num):
+    print "ack"
     send(0, ack_num, 1, 0, 0, 0, '')
 
 
