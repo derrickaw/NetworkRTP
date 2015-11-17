@@ -132,18 +132,18 @@ def recv_packet():
 def proc_packet():
     while True:
         while not process_queue.empty():
-            packet = process_queue.get()
-            data = packet[0]
+            recv_packet = process_queue.get()
+            packet = recv_packet[0]
             #print len(data)
             rtp_header = packet[0:21]
             payload = packet[21:]
 
 
             client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
-                client_port = unpack_rtpheader(data)
+                client_port = unpack_rtpheader(packet)
 
             # Check checksum; if good, proceed; otherwise, drop packet and send nack
-            if not check_checksum(checksum, data):
+            if not check_checksum(checksum, packet):
                 send(0, client_ack_num, 0, 0, 0, 1, None)
             else:
                 # Connection setup
@@ -280,6 +280,7 @@ class Connection:
         self.hash = create_hash(random.randint(0,2**64-1))
         self.hashofhash = create_hash(self.hash)
         self.ack_num = ack_num
+        self.window_size = 1
 
     def get_sender_ip(self):
         return self.client_ip
@@ -295,6 +296,9 @@ class Connection:
 
     def get_ack_num(self):
         return self.ack_num
+
+    def get_window_size(self):
+        return self.get_window_size()
 
     # def increase_seq_num(self, amount):
     #     self.seq_num += amount

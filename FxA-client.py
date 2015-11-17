@@ -4,6 +4,7 @@ import socket
 import struct
 import sys
 import threading
+import Queue
 from threading import Timer
 
 # TODO: Pack Header '!LLHLBLH'
@@ -112,24 +113,46 @@ def main(argv):
 
 
 def connect():
+    global client_state
+    global server_window_size
+    global client_port
 
-    try:
-        sock.bind(('', client_port))
-    except socket.error, msg:
-        print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
-        sys.exit()
+    if client_state == State.CLOSED:
+        try:
+            sock.bind(('', client_port))
+        except socket.error, msg:
+            print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
+            sys.exit()
+    if client_state == State.CLOSED or client_state == State.SYN_SENT:
+        # Send request to connect or if packet was corrupted, dropped, or etc; send again
+        client_state = State.SYN_SENT
+        send(client_seq_num, client_ack_num, 0, 1, 0, 0, '')
+    if client_state == State.SYN_SENT:
+        # Receive syn + ack + challenge back from server
+        ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, server_port = recv()
 
-    # Send request to connect
-    send(client_seq_num, client_ack_num, 0, 1, 0, 0, '')
+        # Check checksum; if bad, drop packet and send nack
+        if not check_checksum(checksum, packet):
+            send(0, client_ack_num, 0, 0, 0, 1, None)
+            return False
+        # Checksum is good; send hash of hash to complete challenge
+        else:
+            client_state = State.SYN_SENT_HASH
+
+            # TODO - send hash of hash to complete challenge
+    if client_state == State.SYN_SENT_HASH:
+        # TODO - recv ack from server to complete 4-way handshake
+
+        return True
 
     # Receive syn + ack + challenge
-    recv()
+    ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = recv()
     num_timeouts = 0
     timer = Timer(10, connect_timeout)
-    #while True:
-    #    data, addr = sock.recvfrom(buff_size)
 
     return True
+
+
 
 
 def send(seq_num, ack_num, ack, syn, fin, nack, payload):
@@ -151,17 +174,16 @@ def recv():
 
     recv_packet = sock.recvfrom(buff_size)
     packet = recv_packet[0]
-
     rtp_header = packet[0:21]
     payload = packet[21:]
-    print payload
-    server_seq_num, ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = \
+    #print payload
+    server_seq_num, ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, server_port = \
         unpack_rtpheader(rtp_header)
 
-
-
+    return ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, server_port
 
     #ip_address_old = struct.pack("!L", ip_address_long)
+
 
 
 def pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack):
@@ -174,19 +196,22 @@ def pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack):
 
 
 def unpack_rtpheader(rtp_header):
+    global server_window_size
+    global server_seq_num
+
     rtp_header = struct.unpack('!LLHLBLH', rtp_header) # 21 bytes
 
-    client_seq_num = rtp_header[0]
-    client_ack_num = rtp_header[1]
+    server_seq_num = rtp_header[0]
+    server_ack_num = rtp_header[1]
     checksum = rtp_header[2]
-    client_window_size = rtp_header[3]
+    server_window_size = rtp_header[3]
     flags = rtp_header[4]
     ack, syn, fin, nack = unpack_bits(flags)
-    client_ip_address_long = rtp_header[5]
-    client_port = rtp_header[6]
+    server_ip_address_long = rtp_header[5]
+    server_port = rtp_header[6]
 
-    return client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
-           client_port
+    return server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, \
+           server_port
 
 
 def pack_bits(ack, syn, fin, nack):
@@ -259,6 +284,8 @@ if __name__ == "__main__":
     client_seq_num = random.randint(0, 2**32-1)
     client_ack_num = client_seq_num
     server_seq_num = 0
+    server_window_size = 1
+    process_queue = Queue.Queue(maxsize=15000)
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
