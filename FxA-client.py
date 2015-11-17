@@ -153,12 +153,14 @@ def connect():
         print ack, syn, fin, nack
         # Check checksum; if bad, drop packet and send nack
         if not check_checksum(checksum, rtp_header + payload):
+            print "check sum bad"
             send(0, client_ack_num, 0, 0, 0, 1, None)
             return False
         # Checksum is good; send hash of hash to complete challenge
         else:
             client_state = State.SYN_SENT_HASH
-            hashofhash = create_hash()
+            hashofhash = create_hash(payload)
+            print "syn + ack + hash"
             send(client_seq_num, client_ack_num, 1, 1, 0, 0, hashofhash)
     if client_state == State.SYN_SENT_HASH:
         # Receive ack from hash challenge from server
@@ -172,6 +174,7 @@ def connect():
             return False
         # Checksum is good; done
         elif ack:
+            print "ack"
             return True
         else:
             return False
@@ -199,18 +202,20 @@ def send(seq_num, ack_num, ack, syn, fin, nack, payload):
         packet = rtp_header
     checksum = sum(bytearray(packet))
     print checksum
-    checksum_byte = struct.pack('!L', checksum)
-    checksum_increment = sum(bytearray(checksum_byte))
-    checksum += checksum_increment
-    print checksum
-    print
+    #checksum_byte = struct.pack('!L', checksum)
+    #checksum_increment = sum(bytearray(checksum_byte))
+    #print checksum_increment
+    #checksum += checksum_increment
+    #print checksum
+    #print
     rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
-    print sum(bytearray(rtp_header))
+
     if payload is not None:
         packet = rtp_header + payload
     else:
         packet = rtp_header
-
+    print len(packet)
+    #print sum(bytearray(packet))
     sock.sendto(packet, net_emu_addr)
 
 def recv():
@@ -278,7 +283,10 @@ def unpack_bits(bit_string):
 
 def check_checksum(checksum, data):
 
+    packed_checksum = struct.pack('!L',checksum)
     new_checksum = sum(bytearray(data))
+    new_checksum -= sum(bytearray(packed_checksum))
+
     if checksum == new_checksum:
         return True
     else:
