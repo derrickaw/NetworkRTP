@@ -73,10 +73,11 @@ def main(argv):
 
     while command_input != 'disconnect':
         command_input = raw_input('Please enter command:')
-        if command_input == 'connect' and is_connected == False:
-            is_connected = connect()
-        elif command_input == 'connect' and is_connected == True:
-            print ("Client already connected to server")
+        if command_input == 'connect':
+            if not is_connected:
+                is_connected = connect()
+            else:
+                print ("Client already connected to server")
         elif command_input == 'disconnect':
             # TODO disconnect() call
             break
