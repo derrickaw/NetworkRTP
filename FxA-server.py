@@ -138,13 +138,13 @@ def proc_packet():
             rtp_header = packet[0:21]
             payload = packet[21:]
 
-
             client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
                 client_port = unpack_rtpheader(packet)
 
             # Check checksum; if good, proceed; otherwise, drop packet and send nack
             if not check_checksum(checksum, packet):
-                send(0, client_ack_num, 0, 0, 0, 1, None)
+                send(0, client_ack_num, 0, 0, 0, 1, '')
+                print "nack"
             else:
                 # Connection setup
                 if (syn and not ack) or (syn and ack):
@@ -181,12 +181,19 @@ def send(seq_num, ack_num, ack, syn, fin, nack, payload):
 
     checksum = 0
     rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
-    packet = rtp_header + payload
+    if payload is not None:
+        packet = rtp_header + payload
+    else:
+        packet = rtp_header
     checksum = sum(bytearray(packet))
-    checksum_increment = sum(bytearray(str(checksum)))
+    checksum_byte = struct.pack('!L', checksum)
+    checksum_increment = sum(bytearray(checksum_byte))
     checksum += checksum_increment
     rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
-    packet = rtp_header + payload
+    if payload is not None:
+        packet = rtp_header + payload
+    else:
+        packet = rtp_header
 
     sock.sendto(packet, net_emu_addr)
 
@@ -201,8 +208,9 @@ def pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack):
 
 
 def check_checksum(checksum, data):
-
+    print checksum
     new_checksum = sum(bytearray(data))
+    print new_checksum
     if checksum == new_checksum:
         return True
     else:
@@ -253,12 +261,16 @@ def check_client_list(client_ip_address, client_port):
             return clientList[i]
     return None
 
-def create_hash(random_int):
+def create_hash_int(random_int):
     random_string = str(random_int)
     hash_value = hashlib.sha224(random_string).hexdigest()
 
     return hash_value
 
+def create_hash(hash_challenge):
+    hashofhash = hashlib.sha224(hash_challenge).hexdigest()
+
+    return hashofhash
 
 def timeout(args):
     pass
@@ -266,7 +278,7 @@ def timeout(args):
 
 
 def acknowledge(ack_num):
-    send(0, ack_num, 1, 0, 0, 0, None)
+    send(0, ack_num, 1, 0, 0, 0, '')
 
 
 class Connection:
@@ -277,7 +289,7 @@ class Connection:
         self.client_port = client_port
         self.timer = Timer(10, timeout)
         self.timer.start()
-        self.hash = create_hash(random.randint(0,2**64-1))
+        self.hash = create_hash_int(random.randint(0,2**64-1))
         self.hashofhash = create_hash(self.hash)
         self.ack_num = ack_num
         self.window_size = 1

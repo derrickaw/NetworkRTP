@@ -116,6 +116,8 @@ def connect():
     global client_state
     global server_window_size
     global client_port
+    global server_seq_num
+    global server_port
 
     if client_state == State.CLOSED:
         try:
@@ -129,21 +131,37 @@ def connect():
         send(client_seq_num, client_ack_num, 0, 1, 0, 0, '')
     if client_state == State.SYN_SENT:
         # Receive syn + ack + challenge back from server
-        ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, server_port = recv()
-
+        rtp_header, payload = recv()
+        server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, \
+            server_port = unpack_rtpheader(rtp_header)
+        print ack, syn, fin, nack
         # Check checksum; if bad, drop packet and send nack
-        if not check_checksum(checksum, packet):
+        if not check_checksum(checksum, rtp_header + payload):
             send(0, client_ack_num, 0, 0, 0, 1, None)
             return False
         # Checksum is good; send hash of hash to complete challenge
         else:
             client_state = State.SYN_SENT_HASH
-
-            # TODO - send hash of hash to complete challenge
+            hashofhash = create_hash()
+            send(client_seq_num, client_ack_num, 1, 1, 0, 0, hashofhash)
     if client_state == State.SYN_SENT_HASH:
-        # TODO - recv ack from server to complete 4-way handshake
+        # Receive ack from hash challenge from server
+        rtp_header, payload = recv()
+        server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, \
+            server_port = unpack_rtpheader(rtp_header)
 
-        return True
+        # Check checksum; if bad, drop packet and send nack
+        if not check_checksum(checksum, rtp_header + payload):
+            send(0, client_ack_num, 0, 0, 0, 1, None)
+            return False
+        # Checksum is good; done
+        elif ack:
+            return True
+        else:
+            return False
+
+    return False
+
 
     # Receive syn + ack + challenge
     ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = recv()
@@ -159,12 +177,23 @@ def send(seq_num, ack_num, ack, syn, fin, nack, payload):
 
     checksum = 0
     rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
-    packet = rtp_header + payload
+    if payload is not None:
+        packet = rtp_header + payload
+    else:
+        packet = rtp_header
     checksum = sum(bytearray(packet))
-    checksum_increment = sum(bytearray(str(checksum)))
+    print checksum
+    checksum_byte = struct.pack('!L', checksum)
+    checksum_increment = sum(bytearray(checksum_byte))
     checksum += checksum_increment
+    print checksum
+    print
     rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
-    packet = rtp_header + payload
+    print sum(bytearray(rtp_header))
+    if payload is not None:
+        packet = rtp_header + payload
+    else:
+        packet = rtp_header
 
     sock.sendto(packet, net_emu_addr)
 
@@ -177,10 +206,9 @@ def recv():
     rtp_header = packet[0:21]
     payload = packet[21:]
     #print payload
-    server_seq_num, ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, server_port = \
-        unpack_rtpheader(rtp_header)
 
-    return ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, server_port
+
+    return rtp_header, payload
 
     #ip_address_old = struct.pack("!L", ip_address_long)
 
@@ -243,11 +271,10 @@ def check_checksum(checksum, data):
 def connect_timeout(args):
     pass
 
-def create_hash(integer):
-    int_string = str(integer)
-    hash = hashlib.sha224(int_string).hexdigest()
+def create_hash(hash_challenge):
+    hashofhash = hashlib.sha224(hash_challenge).hexdigest()
 
-    return hash
+    return hashofhash
 
 
 
