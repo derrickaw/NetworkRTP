@@ -111,39 +111,31 @@ def main(argv):
                 print("Command not recognized")
 
 
-def checksum(msg):
-
-
-    s = 0
-
-    # loop taking 2 characters at a time
-    for i in range(0, len(msg), 2):
-        w = ord(msg[i]) + (ord(msg[i+1]) << 8 )
-        s += w
-
-    s = (s >> 16) + (s & 0xffff)
-    s += s >> 16
-
-    #complement and mask to 4 byte short
-    s = ~s & 0xffff
-
-    return s
 
 
 def send(ack, syn, fin, nack):
-    # TODO Need checksum()
-    rtp_header = pack_rtpheader(ack, syn, fin, nack)
+
+    checksum = 0
+    rtp_header = pack_rtpheader(checksum, ack, syn, fin, nack)
+    checksum = sum(bytearray(rtp_header))
+    checksum2 = sum(bytearray(str(checksum)))
+    checksum += checksum2
+    rtp_header = pack_rtpheader(checksum, ack, syn, fin, nack)
+
     sock.sendto(rtp_header, net_emu_addr)
 
 def recv():
-    packet = sock.recvfrom(buff_size)
-    payload = packet[0]
+    global server_seq_num
+    global client_window_size
+
+    recv_packet = sock.recvfrom(buff_size)
+    packet = recv_packet[0]
 
     # TODO need to consider when we actually send data and do we need byte ordered data instead of string?
-    rtp_header = payload[0:17]
-    data = payload[17:]
-    print data
-    seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = \
+    rtp_header = packet[0:21]
+    payload = packet[21:]
+    print payload
+    server_seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = \
         unpack_rtpheader(rtp_header)
 
 
@@ -152,17 +144,19 @@ def recv():
     #ip_address_old = struct.pack("!L", ip_address_long)
 
 
-def pack_rtpheader(ack, syn, fin, nack):
+def pack_rtpheader(checksum, ack, syn, fin, nack):
 
     flags = pack_bits(ack, syn, fin, nack)
-    calc_checcksum
-    rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, client_window_size, flags, CLIENT_IP_ADDRESS_LONG,
+    rtp_header = struct.pack('!LLHLBLH', seq_num, ack_num, checksum, client_window_size, flags, CLIENT_IP_ADDRESS_LONG,
                              client_port)
+
+
+
     return rtp_header
 
 
 def unpack_rtpheader(rtp_header):
-    rtp_header = struct.unpack('!LLHBLH', rtp_header)
+    rtp_header = struct.unpack('!LLHLBLH', rtp_header)
 
     seq_num = rtp_header[0]
     ack_num = rtp_header[1]
@@ -242,7 +236,7 @@ class State:
 
 if __name__ == "__main__":
 
-    seq_num = 5
+    #seq_num = 5
     ack_num = 3
     client_window_size = 1
     buff_size = 1024
@@ -255,6 +249,7 @@ if __name__ == "__main__":
     net_emu_addr = ''
     client_state = State.CLOSED
     client_seq_num = random.randint(0, 2**32-1)
+    server_seq_num = 0
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

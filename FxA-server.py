@@ -7,7 +7,20 @@ import threading
 import Queue
 from threading import Timer
 
+# GET|FILENAME - CLIENT
+# ACK - SERVER
+# DATA - SERVER
+# ACK - CLIENT
+# ...
+# ACK - CLIENT (PEACEFUL CLOSE)
 
+# POST\FILENAME|FILESIZE(BYTES) - CLIENT
+# ACK - SERVER
+# DATA - CLIENT
+# ACK - SERVER
+# DATA - CLIENT
+# ...
+# ACK -SERVER
 
 def main(argv):
     global server_port
@@ -183,7 +196,7 @@ def unpack_bits(bit_string):
 def connection_setup(seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port):
 
     packed_ip = struct.pack('!L', client_ip_address_long)
-    client_ip_address = socket.inet_ntoa(packed_ip)         # TODO do we want to store IP or IP long?
+    client_ip_address = socket.inet_ntoa(packed_ip)         # TODO do we want to store IP long?
 
     # Check client list for existing connection
     client = check_client_list(client_ip_address, client_port)
@@ -239,21 +252,7 @@ def checkhash():
     pass
 
 
-def checksum(msg):
-    s = 0
 
-    # loop taking 2 characters at a time
-    for i in range(0, len(msg), 2):
-        w = ord(msg[i]) + (ord(msg[i+1]) << 8 )
-        s += w
-
-    s = (s >> 16) + (s & 0xffff)
-    s += s >> 16
-
-    #complement and mask to 4 byte short
-    s = ~s & 0xffff
-
-    return s
 
 class Connection:
 
@@ -265,6 +264,7 @@ class Connection:
         self.timer.start()
         #self.random_num = random.randint(0,2**64-1)
         self.hash = create_hash(random.randint(0,2**64-1))
+        self.hashofhash = create_hash(self.hash)
         self.seq_num = seq_num
 
     def get_sender_ip(self):
@@ -284,6 +284,8 @@ class Connection:
 
     def update_on_receive(self, syn, ack, fin):
         self.timer.cancel()
+        # TODO 3 MINUTES
+
 
         if self.state == State.SYN_RECEIVED:
             if syn and ack and not fin:
