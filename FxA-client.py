@@ -5,7 +5,7 @@ import re
 import socket
 import struct
 import sys
-from threading import Timer
+import threading
 
 
 # TODO: Pack Header '!LLHLBLH'
@@ -151,7 +151,7 @@ def connect():
     # Receive syn + ack + challenge
     ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = recv()
     num_timeouts = 0
-    timer = Timer(10, connect_timeout)
+    timer = threading.Timer(10, connect_timeout)
 
     return True
 
