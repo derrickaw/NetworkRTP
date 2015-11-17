@@ -1,11 +1,12 @@
+import Queue
 import hashlib
 import random
+import re
 import socket
 import struct
 import sys
 import threading
-import Queue
-from threading import Timer
+
 
 # GET|FILENAME - CLIENT
 # ACK - SERVER
@@ -21,6 +22,7 @@ from threading import Timer
 # DATA - CLIENT
 # ...
 # ACK -SERVER
+
 
 def main(argv):
     global server_port
@@ -52,8 +54,10 @@ def main(argv):
 
     # Check IP address is in correct notation
     try:
-        # TODO double check all IP addresses are caught
         socket.inet_aton(net_emu_ip_address)
+        p = re.compile('(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)')
+        if not p.match(net_emu_ip_address):
+            raise socket.error()
     except socket.error:
         print("Invalid IP notation: %s" % argv[1])
         sys.exit(1)
@@ -287,7 +291,7 @@ class Connection:
         self.state = State.SYN_RECEIVED
         self.client_ip = client_ip
         self.client_port = client_port
-        self.timer = Timer(10, timeout)
+        self.timer = threading.Timer(10, timeout)
         self.timer.start()
         self.hash = create_hash_int(random.randint(0,2**64-1))
         self.hashofhash = create_hash(self.hash)
@@ -353,7 +357,7 @@ class Connection:
         else:
             print('state not valid')
 
-        self.timer = Timer(10, timeout)
+        self.timer = threading.Timer(10, timeout)
         self.timer.start()
 
 

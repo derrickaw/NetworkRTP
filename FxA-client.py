@@ -1,11 +1,12 @@
+import Queue
 import hashlib
 import random
+import re
 import socket
 import struct
 import sys
 import threading
-import Queue
-from threading import Timer
+
 
 # TODO: Pack Header '!LLHLBLH'
 
@@ -43,8 +44,10 @@ def main(argv):
 
     # Check that entered NetEmu IP address is in correct format
     try:
-        # TODO double check all IP addresses are caught
         socket.inet_aton(net_emu_ip_address)
+        p = re.compile('(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)')
+        if not p.match(net_emu_ip_address):
+            raise socket.error()
     except socket.error:
         print("Invalid IP notation: %s" % argv[1])
         sys.exit(1)
@@ -166,7 +169,7 @@ def connect():
     # Receive syn + ack + challenge
     ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = recv()
     num_timeouts = 0
-    timer = Timer(10, connect_timeout)
+    timer = threading.Timer(10, connect_timeout)
 
     return True
 
