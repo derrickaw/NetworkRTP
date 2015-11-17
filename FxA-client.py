@@ -19,14 +19,18 @@ def main(argv):
     global client_window_size
     global client_state
     global client_seq_num
+    global is_debug
 
-    if len(argv) != 3:
-        print("Correct usage: FxA-Client X A P")
+    if len(argv) < 3 or len(argv) > 4:
+        print("Correct usage: FxA-Client X A P [-debug]")
         sys.exit(1)
 
     client_port = argv[0]
     net_emu_ip_address = argv[1]
     net_emu_port = argv[2]
+    is_debug_arg = ''
+    if len(argv) == 4:
+        is_debug_arg = argv[3]
     is_connected = False
     command_input = ''
 
@@ -59,6 +63,14 @@ def main(argv):
     except ValueError:
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
+
+    if len(argv) == 4:
+        if is_debug_arg.lower() == '-debug':
+            is_debug = True
+            print('Debug mode activated')
+        else:
+            print('Could not parse argument: %s' % argv[3])
+            sys.exit(1)
 
     # Create address for sending to NetEmu
     net_emu_addr = net_emu_ip_address, net_emu_port
@@ -317,6 +329,7 @@ if __name__ == "__main__":
     server_seq_num = 0
     server_window_size = 1
     process_queue = Queue.Queue(maxsize=15000)
+    is_debug = False
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

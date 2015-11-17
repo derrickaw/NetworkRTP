@@ -30,15 +30,19 @@ def main(argv):
     global net_emu_port
     global net_emu_addr
     global server_window_size
+    global is_debug
 
-    if len(argv) != 3:
-        print("Correct usage: FxA-Server X A P")
+    if len(argv) < 3 or len(argv) > 4:
+        print("Correct usage: FxA-Server X A P [-debug]")
         sys.exit(1)
 
     # Save user input
     server_port = argv[0]
     net_emu_ip_address = argv[1]
     net_emu_port = argv[2]
+    is_debug_arg = ''
+    if len(argv) == 4:
+        is_debug_arg = argv[3]
 
     # Check Port is an int
     try:
@@ -69,6 +73,14 @@ def main(argv):
     except ValueError:
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
+
+    if len(argv) == 4:
+        if is_debug_arg.lower() == '-debug':
+            is_debug = True
+            print('Debug mode activated')
+        else:
+            print('Could not parse argument: %s' % argv[3])
+            sys.exit(1)
 
     # Create address for sending to NetEmu
     net_emu_addr = net_emu_ip_address, net_emu_port
@@ -393,6 +405,7 @@ if __name__ == "__main__":
     net_emu_ip_address_long = ''
     net_emu_port = ''
     net_emu_addr = ''
+    is_debug = False
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
