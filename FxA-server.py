@@ -27,6 +27,7 @@ def main(argv):
     global net_emu_ip_address
     global net_emu_port
     global net_emu_addr
+    global server_window_size
 
     if len(argv) != 3:
         print("Correct usage: FxA-Server X A P")
@@ -102,7 +103,7 @@ def main(argv):
                     print("Invalid command: window requires secondary parameter")
                     continue
                 try:
-                    window_size = int(parsed_command_input[1])
+                    server_window_size = int(parsed_command_input[1])
                 except ValueError:
                     print('Invalid window size (not a number): %s' % parsed_command_input[1])
                     continue
@@ -143,7 +144,7 @@ def proc_packet():
 
             # Check checksum; if good, proceed; otherwise, drop packet and send nack
             if not check_checksum(checksum, data):
-                send(None, 0, client_ack_num, 0, 0, 0, 1, None)
+                send(0, client_ack_num, 0, 0, 0, 1, None)
             else:
                 # Connection setup
                 if (syn and not ack) or (syn and ack):
@@ -209,7 +210,7 @@ def check_checksum(checksum, data):
 
 
 def unpack_rtpheader(rtp_header):
-    rtp_header = struct.unpack('!LLHLBLH', rtp_header)
+    rtp_header = struct.unpack('!LLHLBLH', rtp_header) # 21 bytes
 
     client_seq_num = rtp_header[0]
     client_ack_num = rtp_header[1]

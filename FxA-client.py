@@ -111,18 +111,39 @@ def main(argv):
                 print("Command not recognized")
 
 
+def connect():
+
+    try:
+        sock.bind(('', client_port))
+    except socket.error, msg:
+        print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
+        sys.exit()
+
+    # Send request to connect
+    send(client_seq_num, client_ack_num, 0, 1, 0, 0, '')
+
+    # Receive syn + ack + challenge
+    recv()
+    num_timeouts = 0
+    timer = Timer(10, connect_timeout)
+    #while True:
+    #    data, addr = sock.recvfrom(buff_size)
+
+    return True
 
 
-def send(ack, syn, fin, nack):
+def send(seq_num, ack_num, ack, syn, fin, nack, payload):
 
     checksum = 0
-    rtp_header = pack_rtpheader(checksum, ack, syn, fin, nack)
-    checksum = sum(bytearray(rtp_header))
-    checksum2 = sum(bytearray(str(checksum)))
-    checksum += checksum2
-    rtp_header = pack_rtpheader(checksum, ack, syn, fin, nack)
+    rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
+    packet = rtp_header + payload
+    checksum = sum(bytearray(packet))
+    checksum_increment = sum(bytearray(str(checksum)))
+    checksum += checksum_increment
+    rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
+    packet = rtp_header + payload
 
-    sock.sendto(rtp_header, net_emu_addr)
+    sock.sendto(packet, net_emu_addr)
 
 def recv():
     global server_seq_num
@@ -131,44 +152,41 @@ def recv():
     recv_packet = sock.recvfrom(buff_size)
     packet = recv_packet[0]
 
-    # TODO need to consider when we actually send data and do we need byte ordered data instead of string?
     rtp_header = packet[0:21]
     payload = packet[21:]
     print payload
-    server_seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = \
+    server_seq_num, ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = \
         unpack_rtpheader(rtp_header)
 
 
-    print ack, syn, fin, nack
+
 
     #ip_address_old = struct.pack("!L", ip_address_long)
 
 
-def pack_rtpheader(checksum, ack, syn, fin, nack):
+def pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack):
 
     flags = pack_bits(ack, syn, fin, nack)
     rtp_header = struct.pack('!LLHLBLH', seq_num, ack_num, checksum, client_window_size, flags, CLIENT_IP_ADDRESS_LONG,
                              client_port)
 
-
-
     return rtp_header
 
 
 def unpack_rtpheader(rtp_header):
-    rtp_header = struct.unpack('!LLHLBLH', rtp_header)
+    rtp_header = struct.unpack('!LLHLBLH', rtp_header) # 21 bytes
 
-    seq_num = rtp_header[0]
-    ack_num = rtp_header[1]
-    server_window_size = rtp_header[2]
-    flags = rtp_header[3]
-    print flags
-
+    client_seq_num = rtp_header[0]
+    client_ack_num = rtp_header[1]
+    checksum = rtp_header[2]
+    client_window_size = rtp_header[3]
+    flags = rtp_header[4]
     ack, syn, fin, nack = unpack_bits(flags)
-    server_ip_address_long = rtp_header[4]
-    server_port = rtp_header[5]
+    client_ip_address_long = rtp_header[5]
+    client_port = rtp_header[6]
 
-    return seq_num, ack_num, server_window_size, ack, syn, fin, nack, server_ip_address_long, server_port
+    return client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
+           client_port
 
 
 def pack_bits(ack, syn, fin, nack):
@@ -189,6 +207,13 @@ def unpack_bits(bit_string):
 
     return ack, syn, fin, nack
 
+def check_checksum(checksum, data):
+
+    new_checksum = sum(bytearray(data))
+    if checksum == new_checksum:
+        return True
+    else:
+        return False
 
 def connect_timeout(args):
     pass
@@ -200,21 +225,6 @@ def create_hash(integer):
     return hash
 
 
-def connect():
-
-    try:
-        sock.bind(('', client_port))
-    except socket.error, msg:
-        print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
-        sys.exit()
-    send(0, 1, 0, 0)
-    recv()
-    num_timeouts = 0
-    timer = Timer(10, connect_timeout)
-    #while True:
-    #    data, addr = sock.recvfrom(buff_size)
-
-    return True
 
 
 class State:
@@ -236,8 +246,6 @@ class State:
 
 if __name__ == "__main__":
 
-    #seq_num = 5
-    ack_num = 3
     client_window_size = 1
     buff_size = 1024
     client_port = ''
@@ -249,6 +257,7 @@ if __name__ == "__main__":
     net_emu_addr = ''
     client_state = State.CLOSED
     client_seq_num = random.randint(0, 2**32-1)
+    client_ack_num = client_seq_num
     server_seq_num = 0
 
     try:
