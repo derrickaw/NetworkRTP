@@ -134,50 +134,100 @@ def proc_packet():
             packet = process_queue.get()
             data = packet[0]
             #print len(data)
-
-            seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = \
-                unpack_rtpheader(data)
-
-            # Connection setup
-            if (syn and not ack) or (syn and ack):
-                t_connection = threading.Thread(target=connection_setup,args=(seq_num, ack_num, client_window_size,
-                                                ack, syn, fin, nack, client_ip_address_long, client_port))
-                t_connection.daemon = True
-                t_connection.start()
-
-            # TODO How will we tell the server that we want to pull down or upload a file?
+            rtp_header = packet[0:21]
+            payload = packet[21:]
 
 
+            client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
+                client_port = unpack_rtpheader(data)
+
+            # Check checksum; if good, proceed; otherwise, drop packet and send nack
+            if not check_checksum(checksum, data):
+                send(None, 0, client_ack_num, 0, 0, 0, 1, None)
+            else:
+                # Connection setup
+                if (syn and not ack) or (syn and ack):
+                    connection_setup(client_seq_num, client_ack_num, client_window_size, ack, syn, fin, nack,
+                                     client_ip_address_long, client_port)
+                # Check client list for existing connection and then start
+                elif not syn and not ack and not fin:
+                    client = check_client_list(client_ip_address_long, client_port)
+
+                    # TODO - Look inside packet for command
+
+def connection_setup(client_seq_num, client_ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long,
+                     client_port):
+
+    # Check client list for existing connection
+    client = check_client_list(client_ip_address_long, client_port)
+
+    # Start new connection to client and send client SYN, ACK, CHALLENGE
+    if syn and not ack and not fin and client is None:
+        client = Connection(client_ip_address_long, client_port, client_ack_num)
+        clientList.append(client)
+        send(0, client_ack_num, 1, 1, 0, 0, client.get_hash()) # TODO - 0 for Sequence Number?
+    # Complete 4-way handshake by receiving challenge and sending ACK
+    else:
+        client.update_on_receive(syn, ack, fin)
+
+def transfer_data(client, client_seq_num, client_ack_num, checksum, client_window_size, client_ip_address_long, \
+                  client_port):
+    # TODO - Determine which transfer type - get or post
+    pass
 
 
-def pack_rtpheader(seq_num, ack_num, ack, syn, fin, nack):
+def send(seq_num, ack_num, ack, syn, fin, nack, payload):
+
+    checksum = 0
+    rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
+    packet = rtp_header + payload
+    checksum = sum(bytearray(packet))
+    checksum_increment = sum(bytearray(str(checksum)))
+    checksum += checksum_increment
+    rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
+    packet = rtp_header + payload
+
+    sock.sendto(packet, net_emu_addr)
+
+
+def pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack):
 
     flags = pack_bits(ack, syn, fin, nack)
-    print flags
-    rtp_header = struct.pack('!LLHBLH', seq_num, ack_num, server_window_size, flags, SERVER_IP_ADDRESS_LONG,
+    rtp_header = struct.pack('!LLHLBLH', seq_num, ack_num, checksum, server_window_size, flags, SERVER_IP_ADDRESS_LONG,
                              server_port)
 
     return rtp_header
 
 
+def check_checksum(checksum, data):
+
+    new_checksum = sum(bytearray(data))
+    if checksum == new_checksum:
+        return True
+    else:
+        return False
+
+
 def unpack_rtpheader(rtp_header):
-    rtp_header = struct.unpack('!LLHBLH', rtp_header)
+    rtp_header = struct.unpack('!LLHLBLH', rtp_header)
 
-    seq_num = rtp_header[0]
-    ack_num = rtp_header[1]
-    client_window_size = rtp_header[2]
-    flags = rtp_header[3]
+    client_seq_num = rtp_header[0]
+    client_ack_num = rtp_header[1]
+    checksum = rtp_header[2]
+    client_window_size = rtp_header[3]
+    flags = rtp_header[4]
     ack, syn, fin, nack = unpack_bits(flags)
-    client_ip_address_long = rtp_header[4]
-    client_port = rtp_header[5]
+    client_ip_address_long = rtp_header[5]
+    client_port = rtp_header[6]
 
-    return seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port
+    return client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
+           client_port
 
 
 def pack_bits(ack, syn, fin, nack):
 
     bit_string = str(ack) + str(syn) + str(fin) + str(nack)
-    bit_string = '0000' + bit_string # If you augment, it won't be correct, unless we want to put the flags in higher
+    bit_string = '0000' + bit_string
     bit_string = int(bit_string, 2)
 
     return bit_string
@@ -193,22 +243,7 @@ def unpack_bits(bit_string):
     return ack, syn, fin, nack
 
 
-def connection_setup(seq_num, ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port):
 
-    packed_ip = struct.pack('!L', client_ip_address_long)
-    client_ip_address = socket.inet_ntoa(packed_ip)         # TODO do we want to store IP long?
-
-    # Check client list for existing connection
-    client = check_client_list(client_ip_address, client_port)
-
-    # Start new connection to client and send client SYN, ACK, CHALLENGE
-    if syn and not ack and not fin and client is None:
-        client = Connection(client_ip_address, client_port, seq_num)
-        clientList.append(client)
-        send(client, seq_num, ack_num, 1, 1, 0, 0) # TODO
-    # Complete 4-way handshake by by receiving challenge and sending ACK
-    else:
-        client.update_on_receive(syn, ack, fin)
 
 
 def check_client_list(client_ip_address, client_port):
@@ -219,68 +254,49 @@ def check_client_list(client_ip_address, client_port):
 
 def create_hash(random_int):
     random_string = str(random_int)
-    hash = hashlib.sha224(random_string).hexdigest()
+    hash_value = hashlib.sha224(random_string).hexdigest()
 
-    return hash
-
-def send(client, seq_num, ack_num, ack, syn, fin, nack):
-
-    # TODO Need checksum()
-    print client.get_hash()
-    rtp_header = pack_rtpheader(seq_num, ack_num, ack, syn, fin, nack)
-    payload = pack_payload(rtp_header, client.get_hash())
-    sock.sendto(payload, net_emu_addr)
+    return hash_value
 
 
 def timeout(args):
     pass
 
-def pack_payload(rtp_header, data):
-    payload = rtp_header + data
-    # TODO probably need to do more than this when we actually send the file
-
-    return payload
 
 
-
-def acknowledge(seq_num, ack_num, ack, syn, fin, nack):
-    rtp_header = pack_rtpheader(seq_num, ack_num, ack, syn, fin, nack)
-    sock.sendto(rtp_header, net_emu_addr)
-
-
-def checkhash():
-    pass
-
-
+def acknowledge(ack_num):
+    send(0, ack_num, 1, 0, 0, 0, None)
 
 
 class Connection:
 
-    def __init__(self, client_ip, client_port, seq_num):
+    def __init__(self, client_ip, client_port, ack_num):
         self.state = State.SYN_RECEIVED
         self.client_ip = client_ip
         self.client_port = client_port
         self.timer = Timer(10, timeout)
         self.timer.start()
-        #self.random_num = random.randint(0,2**64-1)
         self.hash = create_hash(random.randint(0,2**64-1))
         self.hashofhash = create_hash(self.hash)
-        self.seq_num = seq_num
+        self.ack_num = ack_num
 
     def get_sender_ip(self):
-        return self.sender_ip
+        return self.client_ip
 
     def get_sender_port(self):
-        return self.sender_port
+        return self.client_port
 
     def get_hash(self):
         return self.hash
 
-    def get_seq_num(self):
-        return self.seq_num
+    def get_hashofhash(self):
+        return self.hashofhash
 
-    def increase_seq_num(self, amount):
-        self.seq_num += amount
+    def get_ack_num(self):
+        return self.ack_num
+
+    # def increase_seq_num(self, amount):
+    #     self.seq_num += amount
 
     def update_on_receive(self, syn, ack, fin):
         self.timer.cancel()
@@ -289,30 +305,30 @@ class Connection:
 
         if self.state == State.SYN_RECEIVED:
             if syn and ack and not fin:
-                if checkhash():
-                    self.state = State.ESTABLISHED
-                    acknowledge()
-                else:
-                    self.state = State.CLOSED
+                #if checkhash():
+                self.state = State.ESTABLISHED
+                acknowledge(self.ack_num)
+                #else:
+                #    self.state = State.CLOSED
         elif self.state == State.ESTABLISHED:
             if not syn and not ack and fin:
                 self.state = State.CLOSE_WAIT
-                acknowledge()
+                acknowledge(self.ack_num)
         elif self.state == State.LAST_ACK:
             if not syn and ack and not fin:
                 self.state = State.CLOSED
         elif self.state == State.FIN_WAIT_1:
             if not syn and not ack and fin:
-                acknowledge()
+                acknowledge(self.ack_num)
                 self.state = State.CLOSING
             if not syn and ack and not fin:
                 self.state = State.FIN_WAIT_2
             if not syn and ack and fin:
-                acknowledge()
+                acknowledge(self.ack_num)
                 self.state = State.TIME_WAIT
         elif self.state == State.FIN_WAIT_2:
             if not syn and not ack and fin:
-                acknowledge()
+                acknowledge(self.ack_num)
                 self.state = State.TIME_WAIT
         elif self.state == State.CLOSING:
             if not syn and ack and not fin:
@@ -365,3 +381,7 @@ if __name__ == "__main__":
 
 
     main(sys.argv[1:])
+
+
+    #packed_ip = struct.pack('!L', client_ip_address_long)
+    #client_ip_address = socket.inet_ntoa(packed_ip)
