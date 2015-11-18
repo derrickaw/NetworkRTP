@@ -75,6 +75,26 @@ def main(argv):
     # Create address for sending to NetEmu
     net_emu_addr = net_emu_ip_address, net_emu_port
 
+    # Bind to client port
+    try:
+        sock.bind(('', client_port))
+    except socket.error, msg:
+        print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
+        sys.exit(1)
+
+
+    # start packet collection and start processing queue
+    # try:
+    #     t_recv = threading.Thread(target=recv_packet, args=())
+    #     t_recv.daemon = True
+    #     t_recv.start()
+    #     t_proc = threading.Thread(target=proc_packet, args=())
+    #     t_proc.daemon = True
+    #     t_proc.start()
+    # except:
+    #     print "Error"
+
+
     # Setup for Client Command Instructions
     print('Command Options:')
     print('connect\t\t|\tConnects to the FxA-server')
@@ -127,6 +147,47 @@ def main(argv):
             else:
                 print("Command not recognized")
 
+def recv_packet():
+    while True:
+        try:
+            packet = sock.recvfrom(buff_size)
+            process_queue.put(packet)
+        except socket.error, msg:
+            continue
+
+def proc_packet():
+    while True:
+        while not process_queue.empty():
+            recv_packet = process_queue.get()
+            packet = recv_packet[0]
+            rtp_header = packet[0:21]
+            payload = packet[21:]
+
+            client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
+                client_port = unpack_rtpheader(rtp_header)
+
+            # # Check checksum; if bad, drop packet and send nack; if good, proceed, otherwise,
+            # if not check_checksum(checksum, packet):
+            #     if is_debug:
+            #         print 'Checksum Incorrect, sending NACK'
+            #     send_nack()
+            # # Checksum is good; let's roll with connection setup or processing command
+            # else:
+            #     if is_debug:
+            #         print 'Checksum Correct'
+            #         print 'Received Payload:'
+            #         print str(payload)
+            #     # Connection setup
+            #     if (syn and not ack) or (syn and ack): #and not # TODO:
+            #         connection_setup(client_seq_num, client_ack_num, client_window_size, ack, syn, fin, nack,
+            #                          client_ip_address_long, client_port, payload)
+            #     # Check client list for existing connection and then start get or post
+            #     elif not syn and not ack and not fin:
+            #         client = check_client_list(client_ip_address_long, client_port)
+            #
+            #         # TODO - Look inside packet for command
+
+
 
 def connect():
     global client_state
@@ -137,89 +198,107 @@ def connect():
     global num_timeouts_syn_sent
     global num_timeouts_syn_ack_hash
     global timer
+    global packet_op
+    global rtp_header
+    global payload
 
-    timer = threading.Timer(10, connect)
-    timer.start()
 
-    # Client is in closed state; let's bind the socket
-    if client_state == State.CLOSED:
-        try:
-            sock.bind(('', client_port))
-        except socket.error, msg:
-            print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
-            sys.exit(1)
-    if client_state == State.CLOSED or client_state == State.SYN_SENT:
+    while True:
         # Send request to connect or if packet was corrupted, dropped, or etc; send again
-        client_state = State.SYN_SENT
-        if is_debug:
-            print "Sending initial SYN to server"
-        num_timeouts_syn_sent += 1
-        send_syn()
-    # Receive syn + ack + challenge back from server
-    if client_state == State.SYN_SENT:
-        # Receive syn + ack + challenge back from server
-        rtp_header, payload = recv()
-        timer.cancel()
-        server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, \
-            server_port = unpack_rtpheader(rtp_header)
-        timer = threading.Timer(10, connect)
-        timer.start()
-
-        # Check checksum; if bad, drop packet and send nack
-        if not check_checksum(checksum, rtp_header + payload):
+        if client_state == State.CLOSED:
+            timer = threading.Timer(10, connect_timeout)
+            timer.start()
+            client_state = State.SYN_SENT
+            packet_op = Data.RECV
             if is_debug:
-                print "Checksum checker detected error on challenge from server, sending NACK"
-            send_nack()
-            return False
+                print "Sending initial SYN to server"
+            send_syn()
+        # Receive syn + ack + challenge back from server
+        if client_state == State.SYN_SENT and packet_op == Data.RECV:
+            rtp_header, payload = recv()
+            timer.cancel()
+            server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, \
+                server_port = unpack_rtpheader(rtp_header)
 
-        # Checksum is good; send hash of hash to complete challenge
-        else:
-            client_state = State.SYN_SENT_HASH
-            hashofhash = create_hash(payload)
+            # Received nack from server; change state back to closed and resend SYN
+            if nack:
+                client_state = State.CLOSED
+            else:
+                # Check checksum; if bad, drop packet, send nack, and go back to recv to obtain new packet from server
+                if not check_checksum(checksum, rtp_header + payload):
+                    timer = threading.Timer(10, connect())
+                    timer.start()
+                    if is_debug:
+                        print "Checksum checker detected error on challenge from server, sending NACK"
+                    send_nack()
+
+                # Checksum is good; send hash_of_hash to complete challenge
+                else:
+                    client_state = State.SYN_SENT_HASH
+                    packet_op = Data.SEND
+
+
+        # Received good checksum and
+        if client_state == State.SYN_SENT_HASH and packet_op == Data.SEND:
+            timer = threading.Timer(10, connect_timeout())
+            timer.start()
+
             if is_debug:
                 print "Received challenge from server sending SYN + ACK + response"
-            num_timeouts_syn_ack_hash += 1
-            if nack:
-                send_nack()
-            else:
-                client_state = State.SYN_SENT_HASH
-                hashofhash = create_hash(payload)
-                send_synack(hashofhash)
-    # Receive ack from hash challenge from server
-    if client_state == State.SYN_SENT_HASH:
-        # Receive ack from hash challenge from server
-        rtp_header, payload = recv()
-        timer.cancel()
-        server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, \
-            server_port = unpack_rtpheader(rtp_header)
+            send_synack(payload)
 
-        # Check checksum; if bad, drop packet and send nack
-        if not check_checksum(checksum, rtp_header + payload):
+
+
+        # Receive ack from hash challenge from server
+        if client_state == State.SYN_SENT_HASH and packet_op == Data.RECV:
+            # Receive ack from hash challenge from server
+            rtp_header, payload = recv()
+            timer.cancel()
+            server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, \
+                server_port = unpack_rtpheader(rtp_header)
+
+            timer = threading.Timer(10, connect)
+            timer.start()
+            # Check checksum; if bad, drop packet and send nack
+            if not check_checksum(checksum, rtp_header + payload):
+                if is_debug:
+                    print "Checksum checker detected error on ACK from server, sending NACK"
+                send_nack()
+                #return False
+
+            # Checksum is good; done
+            elif ack:
+                timer.cancel()
+                if is_debug:
+                    print "Received ACK from server, connection established"
+                return True
+            # Checksum is good, but nack was sent; resend synackhash
+            elif nack:
+                send_synack(payload)
+
+        # Check if timeouts have reached the max limit; if so, return False
+        if num_timeouts_syn_sent > timeout_maxlimit or num_timeouts_syn_ack_hash > timeout_maxlimit:
             if is_debug:
-                print "Checksum checker detected error on ACK from server, sending NACK"
-            send_nack()
+                print "Connection process timed-out"
             return False
 
-        # Checksum is good; done
-        elif ack:
-            if is_debug:
-                print "Received ACK from server, connection established"
-            return True
-        elif nack:
-            num_timeouts_syn_ack_hash += 1
-            hashofhash = create_hash(payload)
-            send_synack(hashofhash)
+        # Receive syn + ack + challenge
+        #ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = recv()
+        #num_timeouts = 0
+        #timer = threading.Timer(10, connect_timeout)
 
-    # Check if timeouts have reached the max limit; if so, return False
-    if num_timeouts_syn_sent > timeout_maxlimit or num_timeouts_syn_ack_hash > timeout_maxlimit:
-        return False
+        #return True
 
-    # Receive syn + ack + challenge
-    ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = recv()
-    num_timeouts = 0
-    timer = threading.Timer(10, connect_timeout)
 
-    return True
+def connect_timeout():
+    global client_state
+    global transfer_data
+
+    if client_state == State.SYN_SENT:
+        client_state = State.CLOSED
+        connect()
+    if client_state == State.SYN_SENT_HASH:
+        pass
 
 
 def send(seq_num, ack_num, ack, syn, fin, nack, payload):
@@ -348,8 +427,10 @@ def check_checksum(checksum, data):
         return False
 
 
-def connect_timeout():
-    pass
+
+
+
+
 
 
 def create_hash(hash_challenge):
@@ -359,12 +440,22 @@ def create_hash(hash_challenge):
 
 
 def send_syn():
+    global num_timeouts_syn_sent
+
+    num_timeouts_syn_sent += 1
     send(client_seq_num, client_ack_num, 0, 1, 0, 0, '')
 
 
 def send_synack(payload):
+    global  num_timeouts_syn_ack_hash
+
+    num_timeouts_syn_ack_hash += 1
+
     if payload is None:
         payload = ''
+    else:
+        hash_of_hash = create_hash(payload)
+
     send(client_seq_num, client_ack_num, 1, 1, 0, 0, payload)
 
 
@@ -392,6 +483,12 @@ class State:
     def __init__(self):
         pass
 
+class Data:
+    SEND = 1
+    RECV = 2
+
+    def __init__(self):
+        pass
 
 if __name__ == "__main__":
 
@@ -415,6 +512,9 @@ if __name__ == "__main__":
     num_timeouts_syn_sent = 0
     num_timeouts_syn_ack_hash = 0
     timeout_maxlimit = 10
+    packet_op = Data.SEND
+    rtp_header = ''
+    payload = ''
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
