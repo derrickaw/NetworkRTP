@@ -1,5 +1,6 @@
 import Queue
 import hashlib
+import os
 import random
 import re
 import socket
@@ -100,8 +101,7 @@ def main(argv):
                     print("Invalid command: get requires secondary parameter")
                     continue
                 if is_connected:
-                    # TODO get()
-                    print('get')
+                    get(command_input_split[1])
                 else:
                     print('get not valid without existing connection')
             elif command_input_split[0] == 'post':
@@ -109,8 +109,7 @@ def main(argv):
                     print("Invalid command: post requires secondary parameter")
                     continue
                 if is_connected:
-                    # TODO post()
-                    print('post')
+                    post(command_input_split[1])
                 else:
                     print('post not valid without existing connection')
             elif command_input_split[0] == 'window':
@@ -154,7 +153,7 @@ def connect():
         if is_debug:
             print "Sending initial SYN to server"
         num_timeouts_syn_sent += 1
-        send_syn()
+        send(client_seq_num, client_ack_num, 0, 1, 0, 0, '')
     # Receive syn + ack + challenge back from server
     if client_state == State.SYN_SENT:
         # Receive syn + ack + challenge back from server
@@ -169,7 +168,7 @@ def connect():
         if not check_checksum(checksum, rtp_header + payload):
             if is_debug:
                 print "Checksum checker detected error on challenge from server, sending NACK"
-            send_nack()
+            send(client_seq_num, client_ack_num, 0, 0, 0, 1, '')
             return False
 
         # Checksum is good; send hash of hash to complete challenge
@@ -180,11 +179,11 @@ def connect():
                 print "Received challenge from server sending SYN + ACK + response"
             num_timeouts_syn_ack_hash += 1
             if nack:
-                send_nack()
+                send(client_seq_num, client_ack_num, 0, 0, 0, 1, '')
             else:
                 client_state = State.SYN_SENT_HASH
                 hashofhash = create_hash(payload)
-                send_synack(hashofhash)
+                send(client_seq_num, client_ack_num, 1, 1, 0, 0, hashofhash)
     # Receive ack from hash challenge from server
     if client_state == State.SYN_SENT_HASH:
         # Receive ack from hash challenge from server
@@ -197,7 +196,7 @@ def connect():
         if not check_checksum(checksum, rtp_header + payload):
             if is_debug:
                 print "Checksum checker detected error on ACK from server, sending NACK"
-            send_nack()
+            send(client_seq_num, client_ack_num, 0, 0, 0, 1, '')
             return False
 
         # Checksum is good; done
@@ -208,7 +207,7 @@ def connect():
         elif nack:
             num_timeouts_syn_ack_hash += 1
             hashofhash = create_hash(payload)
-            send_synack(hashofhash)
+            send(client_seq_num, client_ack_num, 1, 1, 0, 0, hashofhash)
 
     # Check if timeouts have reached the max limit; if so, return False
     if num_timeouts_syn_sent > timeout_maxlimit or num_timeouts_syn_ack_hash > timeout_maxlimit:
@@ -222,7 +221,25 @@ def connect():
     return True
 
 
-def send(seq_num, ack_num, ack, syn, fin, nack, payload):
+def get(filename):
+    pass
+
+
+def post(filename):
+    try:
+        file_handle = open(filename, 'r')
+    except IOError:
+        print "Could not open file: {0}".format(filename)
+        return
+    file_size = os.stat(filename).st_size
+    init_payload = 'POST|{0}|{1}'.format(filename, str(file_size))
+    file_handle.read(123)
+
+
+def send(ack_num, ack, syn, fin, nack, payload):
+    global client_seq_num
+
+
     checksum = 0
     rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
 
@@ -252,6 +269,7 @@ def send(seq_num, ack_num, ack, syn, fin, nack, payload):
         print '\tClient IP Long:\t' + str(CLIENT_IP_ADDRESS_LONG)
         print '\tClient Port:\t' + str(client_port)
         print '\tPayload:\t' + str(payload)
+        print '\tSze-Pyld:\t' + str(payload)
 
     sock.sendto(packet, net_emu_addr)
 
@@ -354,26 +372,7 @@ def connect_timeout():
 
 def create_hash(hash_challenge):
     hash_of_hash = hashlib.sha224(hash_challenge).hexdigest()
-
     return hash_of_hash
-
-
-def send_syn():
-    send(client_seq_num, client_ack_num, 0, 1, 0, 0, '')
-
-
-def send_synack(payload):
-    if payload is None:
-        payload = ''
-    send(client_seq_num, client_ack_num, 1, 1, 0, 0, payload)
-
-
-def send_nack():
-    send(client_seq_num, client_ack_num, 0, 0, 0, 1, '')
-
-
-def send_ack():
-    send(client_seq_num, client_ack_num, 1, 0, 0, 0, '')
 
 
 class State:
@@ -392,6 +391,61 @@ class State:
     def __init__(self):
         pass
 
+
+class RTPHeader:
+    def __init__(self, seq_num, ack_num, checksum, window, ack, syn, fin, nack, ip, port):
+        self.seq_num = seq_num
+        self.ack_num = ack_num
+        self.checksum = checksum
+        self.window = window
+        self.ack = ack
+        self.syn = syn
+        self.fin = fin
+        self.nack = nack
+        self.ip = ip
+        self.port = port
+
+    def get_seq_num(self):
+        return self.seq_num
+
+    def get_ack_num(self):
+        return self.ack_num
+
+    def get_checksum(self):
+        return self.checksum
+
+    def get_window(self):
+        return self.window
+
+    def get_ack(self):
+        return self.ack
+
+    def get_syn(self):
+        return self.syn
+
+    def get_fin(self):
+        return self.fin
+
+    def get_nack(self):
+        return self.nack
+
+    def get_ip(self):
+        return self.ip
+
+    def get_port(self):
+        return self.port
+
+
+class Packet:
+    def __init__(self, header, payload):
+        self.header = header
+        self.payload = payload
+
+    def get_header(self):
+        return self.header
+
+    def get_payload(self):
+        return self.payload
 
 if __name__ == "__main__":
 
