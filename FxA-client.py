@@ -246,14 +246,14 @@ def send(seq_num, ack_num, ack, syn, fin, nack, payload):
         packet = rtp_header
     if is_debug:
         print "Sending:"
-        print '\tClient Seq. Num:\t' + str(seq_num)
+        print '\tClient Seq Num:\t' + str(seq_num)
         print '\tClient ACK Num:\t' + str(ack_num)
         print '\tChecksum:\t' + str(checksum)
-        print '\tWindow:\t' + str(client_window_size)
-        print '\tACK:\t' + str(ack)
-        print '\tSYN:\t' + str(syn)
-        print '\tFIN:\t' + str(fin)
-        print '\tNACK:\t' + str(nack)
+        print '\tWindow:\t\t' + str(client_window_size)
+        print '\tACK:\t\t' + str(ack)
+        print '\tSYN:\t\t' + str(syn)
+        print '\tFIN:\t\t' + str(fin)
+        print '\tNACK:\t\t' + str(nack)
         print '\tClient IP Long:\t' + str(CLIENT_IP_ADDRESS_LONG)
         print '\tClient Port:\t' + str(client_port)
         print '\tPayload:\t' + str(payload)
@@ -302,14 +302,14 @@ def unpack_rtpheader(rtp_header):
 
     if is_debug:
         print "Unpacking Header:"
-        print '\tServer Seq. Num:\t' + str(server_seq_num)
+        print '\tServer Seq Num:\t' + str(server_seq_num)
         print '\tServer ACK Num:\t' + str(server_ack_num)
         print '\tChecksum:\t' + str(checksum)
         print '\tServer Window:\t' + str(server_window_size)
-        print '\tNACK:\t' + str(ack)
-        print '\tSYN:\t' + str(syn)
-        print '\tFIN:\t' + str(fin)
-        print '\tNACK:\t' + str(nack)
+        print '\tNACK:\t\t' + str(ack)
+        print '\tSYN:\t\t' + str(syn)
+        print '\tFIN:\t\t' + str(fin)
+        print '\tNACK:\t\t' + str(nack)
         print '\tServ IP Long:\t' + str(server_ip_address_long)
         print '\tClient Port:\t' + str(server_port)
 
