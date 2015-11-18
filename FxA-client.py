@@ -128,7 +128,6 @@ def main(argv):
                 print("Command not recognized")
 
 
-
 def connect():
     global client_state
     global server_window_size
@@ -172,7 +171,6 @@ def connect():
                 print "Checksum checker detected error on challenge from server, sending NACK"
             send_nack()
             return False
-            
 
         # Checksum is good; send hash of hash to complete challenge
         else:
@@ -216,15 +214,12 @@ def connect():
     if num_timeouts_syn_sent > timeout_maxlimit or num_timeouts_syn_ack_hash > timeout_maxlimit:
         return False
 
-
     # Receive syn + ack + challenge
     ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = recv()
     num_timeouts = 0
     timer = threading.Timer(10, connect_timeout)
 
     return True
-
-
 
 
 def send(seq_num, ack_num, ack, syn, fin, nack, payload):
@@ -289,7 +284,7 @@ def unpack_rtpheader(rtp_header):
     global server_seq_num
     global server_port
 
-    rtp_header = struct.unpack('!LLHLBLH', rtp_header) # 21 bytes
+    rtp_header = struct.unpack('!LLHLBLH', rtp_header)  # 21 bytes
 
     server_seq_num = rtp_header[0]
     server_ack_num = rtp_header[1]
@@ -306,12 +301,12 @@ def unpack_rtpheader(rtp_header):
         print '\tServer ACK Num:\t' + str(server_ack_num)
         print '\tChecksum:\t' + str(checksum)
         print '\tServer Window:\t' + str(server_window_size)
-        print '\tNACK:\t\t' + str(ack)
+        print '\tACK:\t\t' + str(ack)
         print '\tSYN:\t\t' + str(syn)
         print '\tFIN:\t\t' + str(fin)
         print '\tNACK:\t\t' + str(nack)
-        print '\tServ IP Long:\t' + str(server_ip_address_long)
-        print '\tClient Port:\t' + str(server_port)
+        print '\tSer. IP Long:\t' + str(server_ip_address_long)
+        print '\tSer. Port:\t' + str(server_port)
 
     return server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long,\
         server_port
@@ -366,13 +361,16 @@ def create_hash(hash_challenge):
 def send_syn():
     send(client_seq_num, client_ack_num, 0, 1, 0, 0, '')
 
+
 def send_synack(payload):
-    if payload == None:
+    if payload is None:
         payload = ''
     send(client_seq_num, client_ack_num, 1, 1, 0, 0, payload)
 
+
 def send_nack():
     send(client_seq_num, client_ack_num, 0, 0, 0, 1, '')
+
 
 def send_ack():
     send(client_seq_num, client_ack_num, 1, 0, 0, 0, '')
@@ -417,8 +415,6 @@ if __name__ == "__main__":
     num_timeouts_syn_sent = 0
     num_timeouts_syn_ack_hash = 0
     timeout_maxlimit = 10
-
-
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

@@ -145,7 +145,6 @@ def proc_packet():
         while not process_queue.empty():
             recv_packet = process_queue.get()
             packet = recv_packet[0]
-            #print len(data)
             rtp_header = packet[0:21]
             payload = packet[21:]
 
@@ -154,9 +153,15 @@ def proc_packet():
 
             # Check checksum; if bad, drop packet and send nack; if good, proceed, otherwise,
             if not check_checksum(checksum, packet):
+                if is_debug:
+                    print 'Checksum Incorrect, sending NACK'
                 send_nack()
             # Checksum is good; let's roll with connection setup or processing command
             else:
+                if is_debug:
+                    print 'Checksum Correct'
+                    print 'Received Payload:'
+                    print str(payload)
                 # Connection setup
                 if (syn and not ack) or (syn and ack):
                     connection_setup(client_seq_num, client_ack_num, client_window_size, ack, syn, fin, nack,
@@ -205,6 +210,20 @@ def send(seq_num, ack_num, ack, syn, fin, nack, payload):
     else:
         packet = rtp_header
 
+    if is_debug:
+        print "Sending:"
+        print '\tServer Seq Num:\t' + str(seq_num)
+        print '\tServer ACK Num:\t' + str(ack_num)
+        print '\tChecksum:\t' + str(checksum)
+        print '\tWindow:\t\t' + str(server_window_size)
+        print '\tACK:\t\t' + str(ack)
+        print '\tSYN:\t\t' + str(syn)
+        print '\tFIN:\t\t' + str(fin)
+        print '\tNACK:\t\t' + str(nack)
+        print '\tServer IP Long:\t' + str(SERVER_IP_ADDRESS_LONG)
+        print '\tServer Port:\t' + str(server_port)
+        print '\tPayload:\t' + str(payload)
+
     sock.sendto(packet, net_emu_addr)
 
 
@@ -219,7 +238,7 @@ def pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack):
 
 def check_checksum(checksum, data):
 
-    packed_checksum = struct.pack('!L',checksum)
+    packed_checksum = struct.pack('!L', checksum)
     new_checksum = sum(bytearray(data))
     new_checksum -= sum(bytearray(packed_checksum))
 
@@ -230,7 +249,7 @@ def check_checksum(checksum, data):
 
 
 def unpack_rtpheader(rtp_header):
-    rtp_header = struct.unpack('!LLHLBLH', rtp_header) # 21 bytes
+    rtp_header = struct.unpack('!LLHLBLH', rtp_header)  # 21 bytes
 
     client_seq_num = rtp_header[0]
     client_ack_num = rtp_header[1]
@@ -241,8 +260,21 @@ def unpack_rtpheader(rtp_header):
     client_ip_address_long = rtp_header[5]
     client_port = rtp_header[6]
 
-    return client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
-           client_port
+    if is_debug:
+        print "Unpacking Header:"
+        print '\tClient Seq Num:\t' + str(client_seq_num)
+        print '\tClient ACK Num:\t' + str(client_ack_num)
+        print '\tChecksum:\t' + str(checksum)
+        print '\tClient Window:\t' + str(client_window_size)
+        print '\tACK:\t\t' + str(ack)
+        print '\tSYN:\t\t' + str(syn)
+        print '\tFIN:\t\t' + str(fin)
+        print '\tNACK:\t\t' + str(nack)
+        print '\tClient IP Long:\t' + str(client_ip_address_long)
+        print '\tClient Port:\t' + str(server_port)
+
+    return client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long,\
+        client_port
 
 
 def pack_bits(ack, syn, fin, nack):
@@ -268,7 +300,11 @@ def unpack_bits(bit_string):
 def check_client_list(client_ip_address, client_port):
     for i in range(len(clientList)):
         if clientList[i].get_sender_ip() == client_ip_address and clientList[i].get_sender_port() == client_port:
+            if is_debug:
+                print 'Client found in connection list'
             return clientList[i]
+    if is_debug:
+        print 'Client not found in connection list'
     return None
 
 
@@ -281,11 +317,10 @@ def create_hash_int(random_int):
 
 def create_hash(hash_challenge):
     hash_of_hash = hashlib.sha224(hash_challenge).hexdigest()
-
     return hash_of_hash
 
 
-def timeout(args):
+def timeout():
     pass
 
 
@@ -311,8 +346,8 @@ class Connection:
         self.client_port = client_port
         self.timer = threading.Timer(10, timeout)
         self.timer.start()
-        self.hash = create_hash_int(random.randint(0,2**64-1))
-        self.hashofhash = create_hash(self.hash)
+        self.hash = create_hash_int(random.randint(0, 2**64-1))
+        self.hash_of_hash = create_hash(self.hash)
         self.seq_num = seq_num
         self.ack_num = ack_num
         self.window_size = 1
@@ -326,8 +361,8 @@ class Connection:
     def get_hash(self):
         return self.hash
 
-    def get_hashofhash(self):
-        return self.hashofhash
+    def get_hash_of_hash(self):
+        return self.hash_of_hash
 
     def get_seq_num(self):
         return self.seq_num
@@ -352,7 +387,7 @@ class Connection:
         if self.state == State.SYN_RECEIVED:
             if syn and ack and not fin:
                 # Hashes match; complete 4-way handshake
-                if payload == self.hashofhash:
+                if payload == self.hash_of_hash:
                     self.state = State.ESTABLISHED
                     send_ack()
                 # Hashes don't match; send nack
@@ -412,7 +447,7 @@ if __name__ == "__main__":
     server_window_size = 0
     terminate = False
     process_queue = Queue.Queue(maxsize=15000)
-    #t_term = threading.Event()
+    # t_term = threading.Event()
     clientList = []
     server_port = ''
     SERVER_IP_ADDRESS = socket.gethostbyname(socket.gethostname())
@@ -425,7 +460,6 @@ if __name__ == "__main__":
     server_ack_num = server_seq_num
     is_debug = False
 
-
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     except socket.error:
@@ -433,6 +467,3 @@ if __name__ == "__main__":
         sys.exit()
 
     main(sys.argv[1:])
-
-    #packed_ip = struct.pack('!L', client_ip_address_long)
-    #client_ip_address = socket.inet_ntoa(packed_ip)
