@@ -140,10 +140,12 @@ def connect():
             sock.bind(('', client_port))
         except socket.error, msg:
             print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
-            sys.exit()
+            sys.exit(1)
     if client_state == State.CLOSED or client_state == State.SYN_SENT:
         # Send request to connect or if packet was corrupted, dropped, or etc; send again
         client_state = State.SYN_SENT
+        if is_debug:
+            print "Sending initial SYN to server"
         send(client_seq_num, client_ack_num, 0, 1, 0, 0, '')
     if client_state == State.SYN_SENT:
         # Receive syn + ack + challenge back from server
@@ -153,14 +155,16 @@ def connect():
         print ack, syn, fin, nack
         # Check checksum; if bad, drop packet and send nack
         if not check_checksum(checksum, rtp_header + payload):
-            print "check sum bad"
+            if is_debug:
+                print "Checksum checker detected error on challenge from server, sending NACK"
             send(0, client_ack_num, 0, 0, 0, 1, None)
             return False
         # Checksum is good; send hash of hash to complete challenge
         else:
             client_state = State.SYN_SENT_HASH
             hashofhash = create_hash(payload)
-            print "syn + ack + hash"
+            if is_debug:
+                print "Received challenge from server sending SYN + ACK + response"
             send(client_seq_num, client_ack_num, 1, 1, 0, 0, hashofhash)
     if client_state == State.SYN_SENT_HASH:
         # Receive ack from hash challenge from server
@@ -170,15 +174,17 @@ def connect():
 
         # Check checksum; if bad, drop packet and send nack
         if not check_checksum(checksum, rtp_header + payload):
+            if is_debug:
+                print "Checksum checker detected error on ACK from server, sending NACK"
             send(0, client_ack_num, 0, 0, 0, 1, None)
             return False
         # Checksum is good; done
         elif ack:
-            print "ack"
+            if is_debug:
+                print "Received ACK from server, connection established"
             return True
         else:
             return False
-
     return False
 
 
@@ -190,10 +196,7 @@ def connect():
     return True
 
 
-
-
 def send(seq_num, ack_num, ack, syn, fin, nack, payload):
-
     checksum = 0
     rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
     if payload is not None:
@@ -202,21 +205,27 @@ def send(seq_num, ack_num, ack, syn, fin, nack, payload):
         packet = rtp_header
     checksum = sum(bytearray(packet))
     print checksum
-    #checksum_byte = struct.pack('!L', checksum)
-    #checksum_increment = sum(bytearray(checksum_byte))
-    #print checksum_increment
-    #checksum += checksum_increment
-    #print checksum
-    #print
     rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
 
     if payload is not None:
         packet = rtp_header + payload
     else:
         packet = rtp_header
-    print len(packet)
-    #print sum(bytearray(packet))
+    if is_debug:
+        print "Sending:"
+        print '\tClient Seq. Num:\t' + str(seq_num)
+        print '\tClient ACK Num:\t' + str(ack_num)
+        print '\tChecksum:\t' + str(checksum)
+        print '\tWindow:\t' + str(client_window_size)
+        print '\tACK:\t' + str(ack)
+        print '\tSYN:\t' + str(syn)
+        print '\tFIN:\t' + str(fin)
+        print '\tNACK:\t' + str(nack)
+        print '\tClient IP Long:\t' + str(CLIENT_IP_ADDRESS_LONG)
+        print '\tClient Port:\t' + str(client_port)
+        print '\tPayload:\t' + str(payload)
     sock.sendto(packet, net_emu_addr)
+
 
 def recv():
     global server_seq_num
@@ -226,13 +235,9 @@ def recv():
     packet = recv_packet[0]
     rtp_header = packet[0:21]
     payload = packet[21:]
-    #print payload
-
-
+    print 'Received Payload (may be corrupted):'
+    print str(payload)
     return rtp_header, payload
-
-    #ip_address_old = struct.pack("!L", ip_address_long)
-
 
 
 def pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack):
@@ -248,7 +253,7 @@ def unpack_rtpheader(rtp_header):
     global server_window_size
     global server_seq_num
 
-    rtp_header = struct.unpack('!LLHLBLH', rtp_header) # 21 bytes
+    rtp_header = struct.unpack('!LLHLBLH', rtp_header)
 
     server_seq_num = rtp_header[0]
     server_ack_num = rtp_header[1]
@@ -257,10 +262,23 @@ def unpack_rtpheader(rtp_header):
     flags = rtp_header[4]
     ack, syn, fin, nack = unpack_bits(flags)
     server_ip_address_long = rtp_header[5]
-    server_port = rtp_header[6]
+    rec_server_port = rtp_header[6]
 
-    return server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, \
-           server_port
+    if is_debug:
+        print "Unpacking Header:"
+        print '\tServer Seq. Num:\t' + str(server_seq_num)
+        print '\tServer ACK Num:\t' + str(server_ack_num)
+        print '\tChecksum:\t' + str(checksum)
+        print '\tServer Window:\t' + str(server_window_size)
+        print '\tNACK:\t' + str(ack)
+        print '\tSYN:\t' + str(syn)
+        print '\tFIN:\t' + str(fin)
+        print '\tNACK:\t' + str(nack)
+        print '\tServ IP Long:\t' + str(server_ip_address_long)
+        print '\tClient Port:\t' + str(rec_server_port)
+
+    return server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long,\
+        rec_server_port
 
 
 def pack_bits(ack, syn, fin, nack):
@@ -270,6 +288,7 @@ def pack_bits(ack, syn, fin, nack):
     bit_string = int(bit_string, 2)
 
     return bit_string
+
 
 def unpack_bits(bit_string):
 
@@ -281,26 +300,31 @@ def unpack_bits(bit_string):
 
     return ack, syn, fin, nack
 
+
 def check_checksum(checksum, data):
 
-    packed_checksum = struct.pack('!L',checksum)
+    packed_checksum = struct.pack('!L', checksum)
     new_checksum = sum(bytearray(data))
     new_checksum -= sum(bytearray(packed_checksum))
 
     if checksum == new_checksum:
+        if is_debug:
+            print 'Checksum Correct'
         return True
     else:
+        if is_debug:
+            print 'Checksum Incorrect'
         return False
 
-def connect_timeout(args):
+
+def connect_timeout():
     pass
 
+
 def create_hash(hash_challenge):
-    hashofhash = hashlib.sha224(hash_challenge).hexdigest()
+    hash_of_hash = hashlib.sha224(hash_challenge).hexdigest()
 
-    return hashofhash
-
-
+    return hash_of_hash
 
 
 class State:
