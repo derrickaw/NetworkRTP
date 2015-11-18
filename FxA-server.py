@@ -86,7 +86,12 @@ def main(argv):
     net_emu_addr = net_emu_ip_address, net_emu_port
 
     # Bind to server port
-    sock.bind(('', server_port))
+    try:
+        sock.bind(('', server_port))
+    except socket.error, msg:
+        print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
+        sys.exit(1)
+
 
     # start packet collection and start processing queue
     try:
@@ -148,6 +153,7 @@ def proc_packet():
             rtp_header = packet[0:21]
             payload = packet[21:]
 
+            # Unpack header
             client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
                 client_port = unpack_rtpheader(rtp_header)
 
@@ -156,20 +162,23 @@ def proc_packet():
                 if is_debug:
                     print 'Checksum Incorrect, sending NACK'
                 send_nack()
-            # Checksum is good; let's roll with connection setup or processing command
-            else:
-                if is_debug:
-                    print 'Checksum Correct'
-                    print 'Received Payload:'
-                    print str(payload)
-                # Connection setup
-                if (syn and not ack) or (syn and ack):
-                    connection_setup(client_seq_num, client_ack_num, client_window_size, ack, syn, fin, nack,
-                                     client_ip_address_long, client_port, payload)
-                # Check client list for existing connection and then start get or post
-                elif not syn and not ack and not fin:
-                    client = check_client_list(client_ip_address_long, client_port)
 
+            if is_debug:
+                print 'Checksum Correct'
+                print 'Received Payload:'
+                print str(payload)
+
+            # Check to see if client exists or needs to setup
+            client = check_client_list(client_ip_address_long, client_port)
+            if client is None or not client.get_client_setup():
+                connection_setup(client_seq_num, client_ack_num, client_window_size, ack, syn, fin, nack,
+                                 client_ip_address_long, client_port, payload)
+            # Client is setup and ready to process command or files
+            else:
+                # # Check client list for existing connection and then start get or post
+                # if not syn and not ack and not fin:
+                #     client = check_client_list(client_ip_address_long, client_port)
+                pass
                     # TODO - Look inside packet for command
 
 
@@ -184,6 +193,12 @@ def connection_setup(client_seq_num, client_ack_num, client_window_size, ack, sy
         client = Connection(client_ip_address_long, client_port, client_seq_num, client_ack_num)
         clientList.append(client)
         send_synack(client.get_hash())
+    elif (syn or (syn and ack)) and client is not None:
+
+        send_synack(client.get_hash())
+    # TODO - fix server side connection setup states
+
+
     # Complete 4-way handshake by receiving challenge and sending ACK - Client already exists
     else:
         client.update_on_receive(syn, ack, fin, payload)
@@ -377,6 +392,15 @@ class Connection:
         self.timer = threading.Timer(10, timeout)
         self.timer.start()
 
+    def get_client_state(self):
+        return self.state
+
+    def get_client_setup(self):
+        # if client is not in either of these states; client is setup
+        if self.state != State.SYN_RECEIVED and self.state != State.SYN_SENT_HASH:
+            return True
+        return False
+
     # def increase_seq_num(self, amount):
     #     self.seq_num += amount
 
@@ -397,22 +421,22 @@ class Connection:
         elif self.state == State.ESTABLISHED:
             if not syn and not ack and fin:
                 self.state = State.CLOSE_WAIT
-                acknowledge(self.ack_num)
+                ack()
         elif self.state == State.LAST_ACK:
             if not syn and ack and not fin:
                 self.state = State.CLOSED
         elif self.state == State.FIN_WAIT_1:
             if not syn and not ack and fin:
-                acknowledge(self.ack_num)
+                ack()
                 self.state = State.CLOSING
             if not syn and ack and not fin:
                 self.state = State.FIN_WAIT_2
             if not syn and ack and fin:
-                acknowledge(self.ack_num)
+                ack()
                 self.state = State.TIME_WAIT
         elif self.state == State.FIN_WAIT_2:
             if not syn and not ack and fin:
-                acknowledge(self.ack_num)
+                ack()
                 self.state = State.TIME_WAIT
         elif self.state == State.CLOSING:
             if not syn and ack and not fin:
