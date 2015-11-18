@@ -128,94 +128,97 @@ def main(argv):
                 print("Command not recognized")
 
 
+
 def connect():
     global client_state
     global server_window_size
     global client_port
     global server_seq_num
     global server_port
+    global num_timeouts_syn_sent
+    global num_timeouts_syn_ack_hash
+    global timer
 
+    timer = threading.Timer(10, connect)
+    timer.start()
+
+    # Client is in closed state; let's bind the socket
     if client_state == State.CLOSED:
         try:
             sock.bind(('', client_port))
         except socket.error, msg:
             print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
             sys.exit()
+    # Send request to connect or if packet was corrupted, dropped, or etc; send again
     if client_state == State.CLOSED or client_state == State.SYN_SENT:
-        # Send request to connect or if packet was corrupted, dropped, or etc; send again
         client_state = State.SYN_SENT
-        send(client_seq_num, client_ack_num, 0, 1, 0, 0, '')
+        num_timeouts_syn_sent += 1
+        send_syn()
+    # Receive syn + ack + challenge back from server
     if client_state == State.SYN_SENT:
-        # Receive syn + ack + challenge back from server
         rtp_header, payload = recv()
+        timer.cancel()
         server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, \
             server_port = unpack_rtpheader(rtp_header)
-        print ack, syn, fin, nack
+        timer = threading.Timer(10, connect)
+        timer.start()
+
         # Check checksum; if bad, drop packet and send nack
         if not check_checksum(checksum, rtp_header + payload):
-            print "check sum bad"
-            send(0, client_ack_num, 0, 0, 0, 1, None)
-            return False
+            send_nack()
+
         # Checksum is good; send hash of hash to complete challenge
         else:
-            client_state = State.SYN_SENT_HASH
-            hashofhash = create_hash(payload)
-            print "syn + ack + hash"
-            send(client_seq_num, client_ack_num, 1, 1, 0, 0, hashofhash)
+            num_timeouts_syn_ack_hash += 1
+            if nack:
+                send_nack()
+            else:
+                client_state = State.SYN_SENT_HASH
+                hashofhash = create_hash(payload)
+                send_synack(hashofhash)
+    # Receive ack from hash challenge from server
     if client_state == State.SYN_SENT_HASH:
-        # Receive ack from hash challenge from server
         rtp_header, payload = recv()
+        timer.cancel()
         server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, \
             server_port = unpack_rtpheader(rtp_header)
 
         # Check checksum; if bad, drop packet and send nack
         if not check_checksum(checksum, rtp_header + payload):
-            send(0, client_ack_num, 0, 0, 0, 1, None)
-            return False
+            send_nack()
+
         # Checksum is good; done
         elif ack:
             print "ack"
             return True
-        else:
-            return False
+        elif nack:
+            num_timeouts_syn_ack_hash += 1
+            hashofhash = create_hash(payload)
+            send_synack(hashofhash)
 
-    return False
-
-
-    # Receive syn + ack + challenge
-    ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, client_port = recv()
-    num_timeouts = 0
-    timer = threading.Timer(10, connect_timeout)
-
-    return True
-
-
+    # Check if timeouts have reached the max limit; if so, return False
+    if num_timeouts_syn_sent > timeout_maxlimit or num_timeouts_syn_ack_hash > timeout_maxlimit:
+        return False
 
 
 def send(seq_num, ack_num, ack, syn, fin, nack, payload):
 
     checksum = 0
     rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
+
     if payload is not None:
         packet = rtp_header + payload
     else:
         packet = rtp_header
+
     checksum = sum(bytearray(packet))
-    print checksum
-    #checksum_byte = struct.pack('!L', checksum)
-    #checksum_increment = sum(bytearray(checksum_byte))
-    #print checksum_increment
-    #checksum += checksum_increment
-    #print checksum
-    #print
     rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
 
     if payload is not None:
         packet = rtp_header + payload
     else:
         packet = rtp_header
-    print len(packet)
-    #print sum(bytearray(packet))
+
     sock.sendto(packet, net_emu_addr)
 
 def recv():
@@ -226,13 +229,9 @@ def recv():
     packet = recv_packet[0]
     rtp_header = packet[0:21]
     payload = packet[21:]
-    #print payload
 
 
     return rtp_header, payload
-
-    #ip_address_old = struct.pack("!L", ip_address_long)
-
 
 
 def pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack):
@@ -300,7 +299,19 @@ def create_hash(hash_challenge):
 
     return hashofhash
 
+def send_syn():
+    send(client_seq_num, client_ack_num, 0, 1, 0, 0, '')
 
+def send_synack(payload):
+    if payload == None:
+        payload = ''
+    send(client_seq_num, client_ack_num, 1, 1, 0, 0, payload)
+
+def send_nack():
+    send(client_seq_num, client_ack_num, 0, 0, 0, 1, '')
+
+def send_ack():
+    send(client_seq_num, client_ack_num, 1, 0, 0, 0, '')
 
 
 class State:
@@ -338,6 +349,12 @@ if __name__ == "__main__":
     server_window_size = 1
     process_queue = Queue.Queue(maxsize=15000)
     is_debug = False
+    timer = ''
+    num_timeouts_syn_sent = 0
+    num_timeouts_syn_ack_hash = 0
+    timeout_maxlimit = 10
+
+
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

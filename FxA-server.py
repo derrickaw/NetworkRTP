@@ -99,8 +99,6 @@ def main(argv):
     except:
         print "Error"
 
-
-
     # Setup for Server Command Instructions
     print('Command Options:')
     print("window W\t|\tSets the maximum receiver's window size")
@@ -158,35 +156,35 @@ def proc_packet():
                 client_port = unpack_rtpheader(rtp_header)
 
 
-            # Check checksum; if good, proceed; otherwise, drop packet and send nack
+            # Check checksum; if bad, drop packet and send nack; if good, proceed, otherwise,
             if not check_checksum(checksum, packet):
-                send(0, client_ack_num, 0, 0, 0, 1, '')
-                print "nack"
+                send_nack()
+            # Checksum is good; let's roll with connection setup or processing command
             else:
                 # Connection setup
                 if (syn and not ack) or (syn and ack):
                     connection_setup(client_seq_num, client_ack_num, client_window_size, ack, syn, fin, nack,
-                                     client_ip_address_long, client_port)
-                # Check client list for existing connection and then start
+                                     client_ip_address_long, client_port, payload)
+                # Check client list for existing connection and then start get or post
                 elif not syn and not ack and not fin:
                     client = check_client_list(client_ip_address_long, client_port)
 
                     # TODO - Look inside packet for command
 
 def connection_setup(client_seq_num, client_ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long,
-                     client_port):
+                     client_port, payload):
 
     # Check client list for existing connection
     client = check_client_list(client_ip_address_long, client_port)
 
     # Start new connection to client and send client SYN, ACK, CHALLENGE
     if syn and not ack and not fin and client is None:
-        client = Connection(client_ip_address_long, client_port, client_ack_num)
+        client = Connection(client_ip_address_long, client_port, client_seq_num, client_ack_num)
         clientList.append(client)
-        send(0, client_ack_num, 1, 1, 0, 0, client.get_hash()) # TODO - 0 for Sequence Number?
-    # Complete 4-way handshake by receiving challenge and sending ACK
+        send_synack(client.get_hash())
+    # Complete 4-way handshake by receiving challenge and sending ACK - Client already exists
     else:
-        client.update_on_receive(syn, ack, fin)
+        client.update_on_receive(syn, ack, fin, payload)
 
 def transfer_data(client, client_seq_num, client_ack_num, checksum, client_window_size, client_ip_address_long, \
                   client_port):
@@ -267,10 +265,6 @@ def unpack_bits(bit_string):
 
     return ack, syn, fin, nack
 
-
-
-
-
 def check_client_list(client_ip_address, client_port):
     for i in range(len(clientList)):
         if clientList[i].get_sender_ip() == client_ip_address and clientList[i].get_sender_port() == client_port:
@@ -291,16 +285,24 @@ def create_hash(hash_challenge):
 def timeout(args):
     pass
 
+def send_synack(payload):
+    if payload == None:
+        payload = ''
+    send(server_seq_num, server_ack_num, 1, 1, 0, 0, payload)
+
+def send_nack():
+    send(server_seq_num, server_ack_num, 0, 0, 0, 1, '')
+
+def send_ack():
+    send(server_seq_num, server_ack_num, 1, 0, 0, 0, '')
 
 
-def acknowledge(ack_num):
-    print "ack"
-    send(0, ack_num, 1, 0, 0, 0, '')
+
 
 
 class Connection:
 
-    def __init__(self, client_ip, client_port, ack_num):
+    def __init__(self, client_ip, client_port, seq_num, ack_num):
         self.state = State.SYN_RECEIVED
         self.client_ip = client_ip
         self.client_port = client_port
@@ -308,6 +310,7 @@ class Connection:
         self.timer.start()
         self.hash = create_hash_int(random.randint(0,2**64-1))
         self.hashofhash = create_hash(self.hash)
+        self.seq_num = seq_num
         self.ack_num = ack_num
         self.window_size = 1
 
@@ -323,27 +326,37 @@ class Connection:
     def get_hashofhash(self):
         return self.hashofhash
 
+    def get_seq_num(self):
+        return self.seq_num
+
     def get_ack_num(self):
         return self.ack_num
 
     def get_window_size(self):
         return self.get_window_size()
 
+    def restart_timer(self):
+        self.timer = threading.Timer(10, timeout)
+        self.timer.start()
+
     # def increase_seq_num(self, amount):
     #     self.seq_num += amount
 
-    def update_on_receive(self, syn, ack, fin):
+    def update_on_receive(self, syn, ack, fin, payload):
         self.timer.cancel()
         # TODO 3 MINUTES
 
 
         if self.state == State.SYN_RECEIVED:
             if syn and ack and not fin:
-                #if checkhash():
-                self.state = State.ESTABLISHED
-                acknowledge(self.ack_num)
-                #else:
-                #    self.state = State.CLOSED
+                # Hashes match; complete 4-way handshake
+                if payload == self.hashofhash:
+                    self.state = State.ESTABLISHED
+                    send_ack()
+                # Hashes don't match; send nack
+                else:
+                    self.restart_timer()
+                    send_nack()
         elif self.state == State.ESTABLISHED:
             if not syn and not ack and fin:
                 self.state = State.CLOSE_WAIT
@@ -406,7 +419,10 @@ if __name__ == "__main__":
     net_emu_ip_address_long = ''
     net_emu_port = ''
     net_emu_addr = ''
+    server_seq_num = random.randint(0, 2**32-1)
+    server_ack_num = server_seq_num
     is_debug = False
+
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
