@@ -90,10 +90,10 @@ def main(argv):
 
     # start packet collection and start processing queue
     try:
-        t_recv = threading.Thread(target=recv_packet,args=())
+        t_recv = threading.Thread(target=recv_packet, args=())
         t_recv.daemon = True
         t_recv.start()
-        t_proc = threading.Thread(target=proc_packet,args=())
+        t_proc = threading.Thread(target=proc_packet, args=())
         t_proc.daemon = True
         t_proc.start()
     except:
@@ -130,10 +130,6 @@ def main(argv):
     print("Server closing")
     sock.close()
 
-    #t_term.set()
-
-
-
 
 def recv_packet():
     while True:
@@ -142,6 +138,7 @@ def recv_packet():
             process_queue.put(packet)
         except socket.error, msg:
             continue
+
 
 def proc_packet():
     while True:
@@ -154,7 +151,6 @@ def proc_packet():
 
             client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
                 client_port = unpack_rtpheader(rtp_header)
-
 
             # Check checksum; if bad, drop packet and send nack; if good, proceed, otherwise,
             if not check_checksum(checksum, packet):
@@ -171,6 +167,7 @@ def proc_packet():
 
                     # TODO - Look inside packet for command
 
+
 def connection_setup(client_seq_num, client_ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long,
                      client_port, payload):
 
@@ -186,7 +183,8 @@ def connection_setup(client_seq_num, client_ack_num, client_window_size, ack, sy
     else:
         client.update_on_receive(syn, ack, fin, payload)
 
-def transfer_data(client, client_seq_num, client_ack_num, checksum, client_window_size, client_ip_address_long, \
+
+def transfer_data(client, client_seq_num, client_ack_num, checksum, client_window_size, client_ip_address_long,
                   client_port):
     # TODO - Determine which transfer type - get or post
     pass
@@ -255,6 +253,7 @@ def pack_bits(ack, syn, fin, nack):
 
     return bit_string
 
+
 def unpack_bits(bit_string):
 
     bit_string = format(bit_string, '08b')
@@ -265,11 +264,13 @@ def unpack_bits(bit_string):
 
     return ack, syn, fin, nack
 
+
 def check_client_list(client_ip_address, client_port):
     for i in range(len(clientList)):
         if clientList[i].get_sender_ip() == client_ip_address and clientList[i].get_sender_port() == client_port:
             return clientList[i]
     return None
+
 
 def create_hash_int(random_int):
     random_string = str(random_int)
@@ -277,27 +278,29 @@ def create_hash_int(random_int):
 
     return hash_value
 
-def create_hash(hash_challenge):
-    hashofhash = hashlib.sha224(hash_challenge).hexdigest()
 
-    return hashofhash
+def create_hash(hash_challenge):
+    hash_of_hash = hashlib.sha224(hash_challenge).hexdigest()
+
+    return hash_of_hash
+
 
 def timeout(args):
     pass
 
+
 def send_synack(payload):
-    if payload == None:
+    if payload is None:
         payload = ''
     send(server_seq_num, server_ack_num, 1, 1, 0, 0, payload)
+
 
 def send_nack():
     send(server_seq_num, server_ack_num, 0, 0, 0, 1, '')
 
+
 def send_ack():
     send(server_seq_num, server_ack_num, 1, 0, 0, 0, '')
-
-
-
 
 
 class Connection:
@@ -345,7 +348,6 @@ class Connection:
     def update_on_receive(self, syn, ack, fin, payload):
         self.timer.cancel()
         # TODO 3 MINUTES
-
 
         if self.state == State.SYN_RECEIVED:
             if syn and ack and not fin:
@@ -430,9 +432,7 @@ if __name__ == "__main__":
         print 'Failed to create socket'
         sys.exit()
 
-
     main(sys.argv[1:])
-
 
     #packed_ip = struct.pack('!L', client_ip_address_long)
     #client_ip_address = socket.inet_ntoa(packed_ip)
