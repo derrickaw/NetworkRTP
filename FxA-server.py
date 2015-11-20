@@ -139,7 +139,7 @@ def main(argv):
 def recv_packet():
     while True:
         try:
-            packet = sock.recvfrom(buff_size)
+            packet = sock.recvfrom(BUFFER_SIZE)
             process_queue.put(packet)
         except socket.error, msg:
             continue
@@ -148,6 +148,8 @@ def recv_packet():
 def proc_packet():
     while True:
         while not process_queue.empty():
+            if is_debug:
+                print 'Processing Received Data'
             recv_packet = process_queue.get()
             packet = recv_packet[0]
             rtp_header = packet[0:21]
@@ -157,57 +159,52 @@ def proc_packet():
             client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
                 client_port = unpack_rtpheader(rtp_header)
 
-            # Check checksum; if bad, drop packet and send nack; if good, proceed, otherwise,
+            # Check to see if client exists or needs to setup
+            client_loc = check_client_list(client_ip_address_long, client_port)
+
+            # Check checksum; if bad, drop packet and send nack; if good, proceed
             if not check_checksum(checksum, packet):
                 if is_debug:
                     print 'Checksum Incorrect, sending NACK'
                 send_nack()
+                break # Don't allow to go further
 
+            # Checksum is good; let's roll to client
             if is_debug:
                 print 'Checksum Correct'
                 print 'Received Payload:'
                 print str(payload)
 
-            # Check to see if client exists or needs to setup
-            client = check_client_list(client_ip_address_long, client_port)
-            if client is None or not client.get_client_setup():
-                connection_setup(client_seq_num, client_ack_num, client_window_size, ack, syn, fin, nack,
-                                 client_ip_address_long, client_port, payload)
+
+            # Special case where we nack a bad packet off the beginning
+            if nack and client_loc is None:
+                send_nack()
+
+
+            # Client doesn't exist yet
+            elif client_loc is None:
+                client = Connection(client_ip_address_long, client_port, client_seq_num, client_ack_num)
+                clientList.append(client)
+                client.set_last_flags(ack, syn, fin, nack)
+                client.update_on_receive()
+
+            # Client exists
+            elif client_loc is not None:
+                # Receiving response to challenge
+                if syn and ack:
+                    clientList[client_loc].set_last_flags(ack, syn, fin, nack)
+                    clientList[client_loc].set_hash_from_client(payload)
+                    clientList[client_loc].update_on_receive()
+                elif nack:
+                    clientList[client_loc].update_on_receive()
+
             # Client is setup and ready to process command or files
-            else:
+            #else:
                 # # Check client list for existing connection and then start get or post
                 # if not syn and not ack and not fin:
                 #     client = check_client_list(client_ip_address_long, client_port)
-                pass
+                #pass
                     # TODO - Look inside packet for command
-
-
-def connection_setup(client_seq_num, client_ack_num, client_window_size, ack, syn, fin, nack, client_ip_address_long,
-                     client_port, payload):
-
-    # Check client list for existing connection
-    client = check_client_list(client_ip_address_long, client_port)
-
-    # Start new connection to client and send client SYN, ACK, CHALLENGE
-    if syn and not ack and not fin and client is None:
-        client = Connection(client_ip_address_long, client_port, client_seq_num, client_ack_num)
-        clientList.append(client)
-        send_synack(client.get_hash())
-    elif (syn or (syn and ack)) and client is not None:
-
-        send_synack(client.get_hash())
-    # TODO - fix server side connection setup states
-
-
-    # Complete 4-way handshake by receiving challenge and sending ACK - Client already exists
-    else:
-        client.update_on_receive(syn, ack, fin, payload)
-
-
-def transfer_data(client, client_seq_num, client_ack_num, checksum, client_window_size, client_ip_address_long,
-                  client_port):
-    # TODO - Determine which transfer type - get or post
-    pass
 
 
 def send(seq_num, ack_num, ack, syn, fin, nack, payload):
@@ -317,7 +314,7 @@ def check_client_list(client_ip_address, client_port):
         if clientList[i].get_sender_ip() == client_ip_address and clientList[i].get_sender_port() == client_port:
             if is_debug:
                 print 'Client found in connection list'
-            return clientList[i]
+            return i
     if is_debug:
         print 'Client not found in connection list'
     return None
@@ -335,37 +332,38 @@ def create_hash(hash_challenge):
     return hash_of_hash
 
 
-def timeout():
-    pass
-
-
 def send_synack(payload):
-    if payload is None:
-        payload = ''
+
     send(server_seq_num, server_ack_num, 1, 1, 0, 0, payload)
 
 
 def send_nack():
-    send(server_seq_num, server_ack_num, 0, 0, 0, 1, '')
+    send(server_seq_num, server_ack_num, 0, 0, 0, 1, SERVER_EMPTY_PAYLOAD)
 
 
 def send_ack():
-    send(server_seq_num, server_ack_num, 1, 0, 0, 0, '')
+    send(server_seq_num, server_ack_num, 1, 0, 0, 0, SERVER_EMPTY_PAYLOAD)
 
 
 class Connection:
 
     def __init__(self, client_ip, client_port, seq_num, ack_num):
-        self.state = State.SYN_RECEIVED
+        self.state = State.LISTEN
         self.client_ip = client_ip
         self.client_port = client_port
-        self.timer = threading.Timer(10, timeout)
-        self.timer.start()
+        #self.timer = threading.Timer(10, dummy())
+        #self.timer.start()
         self.hash = create_hash_int(random.randint(0, 2**64-1))
         self.hash_of_hash = create_hash(self.hash)
-        self.seq_num = seq_num
+        self.seq_num = 0
         self.ack_num = ack_num
         self.window_size = 1
+        self.last_ack = 0
+        self.last_syn = 0
+        self.last_fin = 0
+        self.last_nack = 0
+        self.hash_from_client = ''
+        self.payload = ''
 
     def get_sender_ip(self):
         return self.client_ip
@@ -388,67 +386,130 @@ class Connection:
     def get_window_size(self):
         return self.get_window_size()
 
-    def restart_timer(self):
-        self.timer = threading.Timer(10, timeout)
-        self.timer.start()
+    # def restart_timer(self):
+    #     self.timer = threading.Timer(10, timeout)
+    #     self.timer.start()
 
     def get_client_state(self):
         return self.state
 
     def get_client_setup(self):
         # if client is not in either of these states; client is setup
-        if self.state != State.SYN_RECEIVED and self.state != State.SYN_SENT_HASH:
+        if self.state != State.SYN_RECEIVED and self.state != State.SYN_SENT_HASH and self.state != State.ESTABLISHED:
             return True
         return False
+
+    def set_last_flags(self, ack, syn, fin, nack):
+        self.last_ack = ack
+        self.last_syn = syn
+        self.last_fin = fin
+        self.last_nack = nack
+
+    def calc_seq_ack_nums(self):
+
+        self.seq_num = self.ack_num
+
+        if len(payload) == 0:
+            client_ack_num = client_seq_num + 1
+        else:
+            client_ack_num = client_seq_num + len(payload)
+
 
     # def increase_seq_num(self, amount):
     #     self.seq_num += amount
 
-    def update_on_receive(self, syn, ack, fin, payload):
-        self.timer.cancel()
-        # TODO 3 MINUTES
+    # def timeout(self):
+    #     if self.state == State.SYN_RECEIVED:
+    #         self.state = State.LISTEN
+    #         self.update_on_receive()
 
-        if self.state == State.SYN_RECEIVED:
-            if syn and ack and not fin:
+    def get_last_ack(self):
+        return self.last_ack
+
+    def get_last_syn(self):
+        return self.last_syn
+
+    def get_last_fin(self):
+        return self.last_fin
+
+    def get_last_nack(self):
+        return self.last_nack
+
+    def set_hash_from_client(self, hash):
+        self.hash_from_client = hash
+
+    def update_on_receive(self):
+        #self.timer.cancel()
+
+        print self.state
+        print self.last_ack, self.last_syn, self.last_fin, self.last_nack
+
+        if self.state == State.ESTABLISHED:
+            if self.last_syn and self.last_ack:
+                self.state = State.SYN_RECEIVED
+            else:
+                print "&"*25
+
+        elif self.state == State.SYN_RECEIVED:
+            if self.last_syn and not self.last_ack:
+                self.state = State.LISTEN
+            elif self.last_syn and self.last_ack:
                 # Hashes match; complete 4-way handshake
-                if payload == self.hash_of_hash:
+                if self.hash_from_client == self.hash_of_hash:
                     self.state = State.ESTABLISHED
                     send_ack()
                 # Hashes don't match; send nack
                 else:
-                    self.restart_timer()
                     send_nack()
-        elif self.state == State.ESTABLISHED:
-            if not syn and not ack and fin:
-                self.state = State.CLOSE_WAIT
-                ack()
-        elif self.state == State.LAST_ACK:
-            if not syn and ack and not fin:
-                self.state = State.CLOSED
-        elif self.state == State.FIN_WAIT_1:
-            if not syn and not ack and fin:
-                ack()
-                self.state = State.CLOSING
-            if not syn and ack and not fin:
-                self.state = State.FIN_WAIT_2
-            if not syn and ack and fin:
-                ack()
-                self.state = State.TIME_WAIT
-        elif self.state == State.FIN_WAIT_2:
-            if not syn and not ack and fin:
-                ack()
-                self.state = State.TIME_WAIT
-        elif self.state == State.CLOSING:
-            if not syn and ack and not fin:
-                self.state = State.TIME_WAIT
+
+        elif self.state == State.LISTEN:
+            print "***********"
+            if self.last_syn and not self.last_ack:
+                self.state = State.SYN_RECEIVED
+                send_synack(self.get_hash())
+
+
+
+
+        # TODO 3 MINUTES
+
+
+
+
+
+
+        #elif self.state == State.ESTABLISHED:
+        #    if nack:
+        #         pass
+        #    if not syn and not ack and fin:
+        #         self.state = State.CLOSE_WAIT
+        #         ack()
+        # elif self.state == State.LAST_ACK:
+        #     if not syn and ack and not fin:
+        #         self.state = State.CLOSED
+        # elif self.state == State.FIN_WAIT_1:
+        #     if not syn and not ack and fin:
+        #         ack()
+        #         self.state = State.CLOSING
+        #     if not syn and ack and not fin:
+        #         self.state = State.FIN_WAIT_2
+        #     if not syn and ack and fin:
+        #         ack()
+        #         self.state = State.TIME_WAIT
+        # elif self.state == State.FIN_WAIT_2:
+        #     if not syn and not ack and fin:
+        #         ack()
+        #         self.state = State.TIME_WAIT
+        # elif self.state == State.CLOSING:
+        #     if not syn and ack and not fin:
+        #         self.state = State.TIME_WAIT
         else:
             print('state not valid')
 
-        self.timer = threading.Timer(10, timeout)
-        self.timer.start()
 
 
 class State:
+    LISTEN = 0
     SYN_SENT = 1
     SYN_RECEIVED = 2
     SYN_SENT_HASH = 3
@@ -466,23 +527,30 @@ class State:
 
 
 if __name__ == "__main__":
-    # Global variables
-    buff_size = 1024
-    server_window_size = 0
+    # Misc Global variables
+    BUFFER_SIZE = 1045  # 21 bytes for rtp_header and 1024 bytes for payload
+    is_debug = False
     terminate = False
-    process_queue = Queue.Queue(maxsize=15000)
-    # t_term = threading.Event()
-    clientList = []
+
+    # Server
+    server_window_size = 0
     server_port = ''
     SERVER_IP_ADDRESS = socket.gethostbyname(socket.gethostname())
     SERVER_IP_ADDRESS_LONG = struct.unpack("!L", socket.inet_aton(SERVER_IP_ADDRESS))[0]
+    server_seq_num = 0  # random.randint(0, 2**32-1)
+    server_ack_num = server_seq_num
+    TIMEOUT_MAX_LIMIT = 10
+    process_queue = Queue.Queue(maxsize=15000)
+    SERVER_EMPTY_PAYLOAD = ''
+
+    # NetEmu
     net_emu_ip_address = ''
     net_emu_ip_address_long = ''
     net_emu_port = ''
     net_emu_addr = ''
-    server_seq_num = random.randint(0, 2**32-1)
-    server_ack_num = server_seq_num
-    is_debug = False
+
+    # Client
+    clientList = []
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
