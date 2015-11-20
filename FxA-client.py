@@ -298,14 +298,40 @@ def get(filename):
     pass
 
 
+def send_and_wait_for_ack(payload, num_timeouts):
+    # Send out the packet
+    send(0, 0, 0, 0, payload)
+    packet = None
+    try:
+        # Wait until the process queue has a packet, block for TIMEOUT_TIME seconds
+        packet = process_queue.get(True, TIMEOUT_TIME)
+    except Queue.Empty:  # If after blocking there still was not a packet in the queue
+        # If we have timed out TIMEOUT_MAX_LIMIT times, then cancel the operation
+        if num_timeouts == TIMEOUT_MAX_LIMIT:
+            return False
+        else:
+            # If we have timed out less than TIMEOUT_MAX_LIMIT times, then try again with num_timeouts incremented
+            print('.'),
+            send_and_wait_for_ack(payload, num_timeouts + 1)
+    if packet.get_header().get_ip() == net_emu_ip_address_long and \
+        packet.get_header().get_port() == net_emu_port and \
+            packet.get_header().get_ack_num() == client_ack_num:
+        pass
+
+
 def post(filename):
     try:
         file_handle = open(filename, 'r')
     except IOError:
         print "Could not open file: {0}".format(filename)
         return
+    del packet_list[:]  # clear out the list of packets
     file_size = os.stat(filename).st_size
     init_payload = 'POST|{0}|{1}'.format(filename, str(file_size))
+    if not send_and_wait_for_ack(init_payload, 0):
+        print 'Could not retrieve response, POST Failed'
+        return
+
     file_handle.read(123)
 
 
@@ -594,6 +620,7 @@ if __name__ == "__main__":
     TIMEOUT_MAX_LIMIT = 3
     TIMEOUT_TIME = 5
     client_state_master = State.SYN_SENT
+    packet_list = []
 
     # NetEmu
     net_emu_ip_address = ''
