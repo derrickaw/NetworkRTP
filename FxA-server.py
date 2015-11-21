@@ -139,64 +139,100 @@ def main(argv):
 def recv_packet():
     while True:
         try:
-            packet = sock.recvfrom(BUFFER_SIZE)
-            process_queue.put(packet)
+            # Obtain packet from buffer and process by breaking up into rtp_header and payload
+            packet_recv = sock.recvfrom(BUFFER_SIZE)
+            packet = packet_recv[0]
+            rtp_header = packet[0:21]
+            rtp_header = unpack_rtpheader(rtp_header)
+            payload = packet[21:]
+            # print 'Received Payload (may be corrupted):'
+            # print str(payload)
+
+            # Check checksum; if bad, drop packet and send nack; if good, proceed
+            if not check_checksum(rtp_header.get_checksum(), rtp_header, payload):
+                if is_debug:
+                    print 'Checksum Incorrect' # sending NACK'
+                # send_nack(rtp_header)
+                #  TODO - don't send NACK, we don't know where it was corrupted at, so its possible we could send it
+                #  to the wrong client
+
+            # Checksum is good; lets process further
+            else:
+
+                # Checksum is good
+                if is_debug:
+                    print 'Received Payload:'
+                    print str(payload)
+
+                # Check to see if client exists
+                client_loc = check_client_list(rtp_header.get_ip(), rtp_header.get_port())
+                if client_loc is not None:
+                    # Check for correct ack; if good, set client window size and enqueue packet into process queue
+                    if check_server_ack_num(client_loc, rtp_header):
+                        clientList[client_loc].set_window_size(rtp_header.get_window())
+                    # Process Packet and enqueue into process queue
+                    processed_packet = Packet(rtp_header, payload)
+                    process_queue.put(processed_packet)
+                elif client_loc is None:
+                    # Process Packet and enqueue into process queue
+                    processed_packet = Packet(rtp_header, payload)
+                    process_queue.put(processed_packet)
+
+
+
+
         except socket.error, msg:
             continue
 
 
+def check_server_ack_num(client_loc, rtp_header):
+    if clientList[client_loc].get_server_ack_num() == rtp_header.get_ack_num():
+        return True
+    return False
+
+
 def proc_packet():
+    global clientList
+
     while True:
         while not process_queue.empty():
             if is_debug:
                 print 'Processing Received Data'
-            recv_packet = process_queue.get()
-            packet = recv_packet[0]
-            rtp_header = packet[0:21]
-            payload = packet[21:]
-
-            # Unpack header
-            client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long, \
-                client_port = unpack_rtpheader(rtp_header)
+            packet = process_queue.get()
+            rtp_header = packet.get_header()
+            payload = packet.get_payload()
 
             # Check to see if client exists or needs to setup
-            client_loc = check_client_list(client_ip_address_long, client_port)
-
-            # Check checksum; if bad, drop packet and send nack; if good, proceed
-            if not check_checksum(checksum, packet):
-                if is_debug:
-                    print 'Checksum Incorrect, sending NACK'
-                send_nack()
-                break # Don't allow to go further
-
-            # Checksum is good; let's roll to client
-            if is_debug:
-                print 'Checksum Correct'
-                print 'Received Payload:'
-                print str(payload)
-
+            client_loc = check_client_list(rtp_header.get_ip(), rtp_header.get_port())
 
             # Special case where we nack a bad packet off the beginning
-            if nack and client_loc is None:
-                send_nack()
-
+            # if rtp_header.get_nack() and client_loc is None:
+            #     send_nack()
 
             # Client doesn't exist yet
-            elif client_loc is None:
-                client = Connection(client_ip_address_long, client_port, client_seq_num, client_ack_num)
+            if client_loc is None:
+                client = Connection(rtp_header.get_seq_num(), rtp_header.get_window(), rtp_header.get_ack(),
+                                    rtp_header.get_syn(), rtp_header.get_fin(), rtp_header.get_nack(),
+                                    rtp_header.get_ip(), rtp_header.get_port())
                 clientList.append(client)
-                client.set_last_flags(ack, syn, fin, nack)
                 client.update_on_receive()
 
             # Client exists
             elif client_loc is not None:
+                clientList[client_loc].set_client_seq_num(rtp_header.get_seq_num())
+                clientList[client_loc].calc_client_ack_num(payload)
+
                 # Receiving response to challenge
-                if syn and ack:
-                    clientList[client_loc].set_last_flags(ack, syn, fin, nack)
+                if rtp_header.get_syn() and rtp_header.get_ack():
+                    clientList[client_loc].set_last_flags(rtp_header.get_ack(), rtp_header.get_syn(),
+                                                          rtp_header.get_fin(), rtp_header.get_nack())
                     clientList[client_loc].set_hash_from_client(payload)
                     clientList[client_loc].update_on_receive()
-                elif nack:
+                # Client is resending SYN, challenge must have gotten corrupted or lost
+                elif rtp_header.get_syn() and not rtp_header.get_ack():
                     clientList[client_loc].update_on_receive()
+                # elif nack:
+                #    clientList[client_loc].update_on_receive()
 
             # Client is setup and ready to process command or files
             #else:
@@ -207,27 +243,30 @@ def proc_packet():
                     # TODO - Look inside packet for command
 
 
-def send(seq_num, ack_num, ack, syn, fin, nack, payload):
+def send(server_seq_num, client_ack_num, ack, syn, fin, nack, payload):
 
+
+
+    # Calculate checksum on rtp_header and payload with a blank checksum
     checksum = 0
-    rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
-    if payload is not None:
-        packet = rtp_header + payload
-    else:
-        packet = rtp_header
+    rtp_header_obj = RTPHeader(server_seq_num, client_ack_num, checksum, server_window_size, ack, syn, fin, nack,
+                               SERVER_IP_ADDRESS_LONG, server_port)
+    packed_rtp_header = pack_rtpheader(rtp_header_obj)
+    packet = packed_rtp_header + payload
     checksum = sum(bytearray(packet))
-    rtp_header = pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack)
-    if payload is not None:
-        packet = rtp_header + payload
-    else:
-        packet = rtp_header
+
+    # Install checksum into rtp_header and package up with payload
+    rtp_header_obj = RTPHeader(server_seq_num, client_ack_num, checksum, server_window_size, ack, syn, fin, nack,
+                               SERVER_IP_ADDRESS_LONG, server_port)
+    packed_rtp_header = pack_rtpheader(rtp_header_obj)
+    packet = packed_rtp_header + payload
 
     if is_debug:
         print "Sending:"
-        print '\tServer Seq Num:\t' + str(seq_num)
-        print '\tServer ACK Num:\t' + str(ack_num)
+        print '\tServer Seq Num:\t' + str(server_seq_num)
+        print '\tClient ACK Num:\t' + str(client_ack_num)
         print '\tChecksum:\t' + str(checksum)
-        print '\tWindow:\t\t' + str(server_window_size)
+        print '\tServer Window:\t' + str(server_window_size)
         print '\tACK:\t\t' + str(ack)
         print '\tSYN:\t\t' + str(syn)
         print '\tFIN:\t\t' + str(fin)
@@ -235,47 +274,61 @@ def send(seq_num, ack_num, ack, syn, fin, nack, payload):
         print '\tServer IP Long:\t' + str(SERVER_IP_ADDRESS_LONG)
         print '\tServer Port:\t' + str(server_port)
         print '\tPayload:\t' + str(payload)
+        print '\tSze-Pyld:\t' + str(len(payload))
 
     sock.sendto(packet, net_emu_addr)
 
+def pack_rtpheader(rtp_header):
 
-def pack_rtpheader(seq_num, ack_num, checksum, ack, syn, fin, nack):
-
-    flags = pack_bits(ack, syn, fin, nack)
-    rtp_header = struct.pack('!LLHLBLH', seq_num, ack_num, checksum, server_window_size, flags, SERVER_IP_ADDRESS_LONG,
-                             server_port)
+    flags = pack_bits(rtp_header.get_ack(), rtp_header.get_syn(), rtp_header.get_fin(), rtp_header.get_nack())
+    rtp_header = struct.pack('!LLHLBLH', rtp_header.get_seq_num(), rtp_header.get_ack_num(), rtp_header.get_checksum(),
+                             rtp_header.get_window(), flags, rtp_header.get_ip(), rtp_header.get_port())
 
     return rtp_header
 
 
-def check_checksum(checksum, data):
+def check_checksum(checksum, rtp_header, payload):
 
+    flags = pack_bits(rtp_header.get_ack(), rtp_header.get_syn(), rtp_header.get_fin(), rtp_header.get_nack())
     packed_checksum = struct.pack('!L', checksum)
+    packed_rtp_header = struct.pack('!LLHLBLH', rtp_header.get_seq_num(), rtp_header.get_ack_num(),
+                                    rtp_header.get_checksum(), rtp_header.get_window(), flags, rtp_header.get_ip(),
+                                    rtp_header.get_port())
+
+    data = packed_rtp_header + payload
+
     new_checksum = sum(bytearray(data))
     new_checksum -= sum(bytearray(packed_checksum))
 
     if checksum == new_checksum:
+        if is_debug:
+            print 'Checksum Correct'
         return True
     else:
+        if is_debug:
+            print 'Checksum Incorrect'
         return False
 
 
-def unpack_rtpheader(rtp_header):
-    rtp_header = struct.unpack('!LLHLBLH', rtp_header)  # 21 bytes
+def unpack_rtpheader(packed_rtp_header):
 
-    client_seq_num = rtp_header[0]
-    client_ack_num = rtp_header[1]
-    checksum = rtp_header[2]
-    client_window_size = rtp_header[3]
-    flags = rtp_header[4]
+    unpacked_rtp_header = struct.unpack('!LLHLBLH', packed_rtp_header)  # 21 bytes
+
+    client_seq_num = unpacked_rtp_header[0]
+    server_ack_num_test = unpacked_rtp_header[1]
+    checksum = unpacked_rtp_header[2]
+    client_window_size = unpacked_rtp_header[3]
+    flags = unpacked_rtp_header[4]
     ack, syn, fin, nack = unpack_bits(flags)
-    client_ip_address_long = rtp_header[5]
-    client_port = rtp_header[6]
+    client_ip_address_long = unpacked_rtp_header[5]
+    client_port = unpacked_rtp_header[6]
+    rtp_header_obj = RTPHeader(client_seq_num, server_ack_num_test, checksum, client_window_size, ack, syn, fin, nack,
+                               client_ip_address_long, client_port)
 
     if is_debug:
         print "Unpacking Header:"
         print '\tClient Seq Num:\t' + str(client_seq_num)
-        print '\tClient ACK Num:\t' + str(client_ack_num)
+        print '\tServer ACK Num:\t' + str(server_ack_num_test)
         print '\tChecksum:\t' + str(checksum)
         print '\tClient Window:\t' + str(client_window_size)
         print '\tACK:\t\t' + str(ack)
@@ -283,10 +336,9 @@ def unpack_rtpheader(rtp_header):
         print '\tFIN:\t\t' + str(fin)
         print '\tNACK:\t\t' + str(nack)
         print '\tClient IP Long:\t' + str(client_ip_address_long)
-        print '\tClient Port:\t' + str(server_port)
+        print '\tClient Port:\t' + str(client_port)
 
-    return client_seq_num, client_ack_num, checksum, client_window_size, ack, syn, fin, nack, client_ip_address_long,\
-        client_port
+    return rtp_header_obj
 
 
 def pack_bits(ack, syn, fin, nack):
@@ -320,48 +372,38 @@ def check_client_list(client_ip_address, client_port):
     return None
 
 
-def create_hash_int(random_int):
-    random_string = str(random_int)
-    hash_value = hashlib.sha224(random_string).hexdigest()
+def send_synack(server_seq_num, client_ack_num, payload):
 
-    return hash_value
+    send(server_seq_num, client_ack_num, 1, 1, 0, 0, payload)
 
 
-def create_hash(hash_challenge):
-    hash_of_hash = hashlib.sha224(hash_challenge).hexdigest()
-    return hash_of_hash
+def send_nack(server_seq_num, client_ack_num):
+    send(server_seq_num, client_ack_num, 0, 0, 0, 1, EMPTY_PAYLOAD)
 
 
-def send_synack(payload):
-
-    send(server_seq_num, server_ack_num, 1, 1, 0, 0, payload)
-
-
-def send_nack():
-    send(server_seq_num, server_ack_num, 0, 0, 0, 1, SERVER_EMPTY_PAYLOAD)
-
-
-def send_ack():
-    send(server_seq_num, server_ack_num, 1, 0, 0, 0, SERVER_EMPTY_PAYLOAD)
+def send_ack(server_seq_num, client_ack_num):
+    send(server_seq_num, client_ack_num, 1, 0, 0, 0, EMPTY_PAYLOAD)
 
 
 class Connection:
 
-    def __init__(self, client_ip, client_port, seq_num, ack_num):
+    def __init__(self, seq_num, window_size, ack, syn, fin, nack, client_ip, client_port):
         self.state = State.LISTEN
+        self.client_seq_num = seq_num
+        self.client_ack_num = self.client_seq_num + 1
+        self.server_seq_num = 100
+        self.server_ack_num = self.server_seq_num
+        self.window_size = window_size
+        self.last_ack = ack
+        self.last_syn = syn
+        self.last_fin = fin
+        self.last_nack = nack
         self.client_ip = client_ip
         self.client_port = client_port
         #self.timer = threading.Timer(10, dummy())
         #self.timer.start()
-        self.hash = create_hash_int(random.randint(0, 2**64-1))
-        self.hash_of_hash = create_hash(self.hash)
-        self.seq_num = 0
-        self.ack_num = ack_num
-        self.window_size = 1
-        self.last_ack = 0
-        self.last_syn = 0
-        self.last_fin = 0
-        self.last_nack = 0
+        self.hash = hashlib.sha224(str(random.randint(0, 2**64-1))).hexdigest()
+        self.hash_of_hash = hashlib.sha224(self.hash).hexdigest()
         self.hash_from_client = ''
         self.payload = ''
 
@@ -377,11 +419,29 @@ class Connection:
     def get_hash_of_hash(self):
         return self.hash_of_hash
 
-    def get_seq_num(self):
-        return self.seq_num
+    def get_client_seq_num(self):
+        return self.client_seq_num
 
-    def get_ack_num(self):
-        return self.ack_num
+    def set_client_seq_num(self, seq_num):
+        self.client_seq_num = seq_num
+
+    def get_client_ack_num(self):
+        return self.client_ack_num
+
+    def set_client_ack_num(self, ack_num):
+        self.client_ack_num = ack_num
+
+    def get_server_seq_num(self):
+        return self.server_seq_num
+
+    def set_server_seq_num(self, seq_num):
+        self.server_seq_num = seq_num
+
+    def get_server_ack_num(self):
+        return self.server_ack_num
+
+    def set_server_ack_num(self, ack_num):
+        self.server_ack_num = ack_num
 
     def get_window_size(self):
         return self.get_window_size()
@@ -405,14 +465,22 @@ class Connection:
         self.last_fin = fin
         self.last_nack = nack
 
-    def calc_seq_ack_nums(self):
+    def calc_server_seq_ack_nums(self, payload):
 
-        self.seq_num = self.ack_num
+        self.server_seq_num = self.server_ack_num
 
         if len(payload) == 0:
-            client_ack_num = client_seq_num + 1
+            self.server_ack_num = self.server_seq_num + 1
         else:
-            client_ack_num = client_seq_num + len(payload)
+            self.server_ack_num = self.server_seq_num + len(payload)
+
+
+    def calc_client_ack_num(self, payload):
+
+        if len(payload) == 0:
+            self.client_ack_num = self.client_seq_num + 1
+        else:
+            self.client_ack_num = self.client_seq_num + len(payload)
 
 
     # def increase_seq_num(self, amount):
@@ -438,17 +506,14 @@ class Connection:
     def set_hash_from_client(self, hash):
         self.hash_from_client = hash
 
-    def update_on_receive(self):
-        #self.timer.cancel()
+    def set_window_size(self, window):
+        self.window_size = window
 
-        print self.state
-        print self.last_ack, self.last_syn, self.last_fin, self.last_nack
+    def update_on_receive(self):
 
         if self.state == State.ESTABLISHED:
             if self.last_syn and self.last_ack:
                 self.state = State.SYN_RECEIVED
-            else:
-                print "&"*25
 
         elif self.state == State.SYN_RECEIVED:
             if self.last_syn and not self.last_ack:
@@ -457,16 +522,17 @@ class Connection:
                 # Hashes match; complete 4-way handshake
                 if self.hash_from_client == self.hash_of_hash:
                     self.state = State.ESTABLISHED
-                    send_ack()
+                    self.calc_server_seq_ack_nums(EMPTY_PAYLOAD)
+                    send_ack(self.server_ack_num, self.client_ack_num)
                 # Hashes don't match; send nack
                 else:
                     send_nack()
 
         elif self.state == State.LISTEN:
-            print "***********"
             if self.last_syn and not self.last_ack:
                 self.state = State.SYN_RECEIVED
-                send_synack(self.get_hash())
+                self.calc_server_seq_ack_nums(self.hash)
+                send_synack(self.server_seq_num, self.client_ack_num, self.hash)
 
 
 
@@ -525,23 +591,81 @@ class State:
     def __init__(self):
         pass
 
+class RTPHeader:
+    def __init__(self, seq_num, ack_num, checksum, window, ack, syn, fin, nack, ip, port):
+        self.seq_num = seq_num
+        self.ack_num = ack_num
+        self.checksum = checksum
+        self.window = window
+        self.ack = ack
+        self.syn = syn
+        self.fin = fin
+        self.nack = nack
+        self.ip = ip
+        self.port = port
+
+    def get_seq_num(self):
+        return self.seq_num
+
+    def get_ack_num(self):
+        return self.ack_num
+
+    def get_checksum(self):
+        return self.checksum
+
+    def get_window(self):
+        return self.window
+
+    def get_ack(self):
+        return self.ack
+
+    def get_syn(self):
+        return self.syn
+
+    def get_fin(self):
+        return self.fin
+
+    def get_nack(self):
+        return self.nack
+
+    def get_ip(self):
+        return self.ip
+
+    def get_port(self):
+        return self.port
+
+
+class Packet:
+    def __init__(self, header, payload):
+        self.header = header
+        self.payload = payload
+
+    def get_header(self):
+        return self.header
+
+    def get_payload(self):
+        return self.payload
+
+
+
 
 if __name__ == "__main__":
     # Misc Global variables
     BUFFER_SIZE = 1045  # 21 bytes for rtp_header and 1024 bytes for payload
     is_debug = False
     terminate = False
+    EMPTY_PAYLOAD = ''
+
 
     # Server
-    server_window_size = 0
+    server_window_size = 1
     server_port = ''
     SERVER_IP_ADDRESS = socket.gethostbyname(socket.gethostname())
     SERVER_IP_ADDRESS_LONG = struct.unpack("!L", socket.inet_aton(SERVER_IP_ADDRESS))[0]
-    server_seq_num = 0  # random.randint(0, 2**32-1)
-    server_ack_num = server_seq_num
+    #server_seq_num = 0  # random.randint(0, 2**32-1)
+    #server_ack_num = server_seq_num
     TIMEOUT_MAX_LIMIT = 10
     process_queue = Queue.Queue(maxsize=15000)
-    SERVER_EMPTY_PAYLOAD = ''
 
     # NetEmu
     net_emu_ip_address = ''

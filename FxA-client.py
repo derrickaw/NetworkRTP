@@ -18,10 +18,11 @@ def main(argv):
     global net_emu_port
     global net_emu_addr
     global client_window_size
-    global client_state
     global client_seq_num
     global is_debug
+    global is_connected
 
+    # Check for correct number of parameters
     if len(argv) < 3 or len(argv) > 4:
         print("Correct usage: FxA-Client X A P [-debug]")
         sys.exit(1)
@@ -32,7 +33,6 @@ def main(argv):
     is_debug_arg = ''
     if len(argv) == 4:
         is_debug_arg = argv[3]
-    is_connected = False
     command_input = ''
 
     # Check that entered client port is an integer
@@ -65,6 +65,7 @@ def main(argv):
         print('Invalid NetEmu port number: %s' % argv[2])
         sys.exit(1)
 
+    # Check for debug
     if len(argv) == 4:
         if is_debug_arg.lower() == '-debug':
             is_debug = True
@@ -95,6 +96,7 @@ def main(argv):
     # except:
     #     print "Error"
 
+    t_connect = ''
 
     # Setup for Client Command Instructions
     print('Command Options:')
@@ -110,13 +112,11 @@ def main(argv):
             if not is_connected:
                 # start connect
                 try:
-                    t_connect = threading.Thread(target=connect, args=())
+                    t_connect = threading.Thread(target=connect, args=(State.SYN_SENT, 0, 0))
                     t_connect.daemon = True
                     t_connect.start()
                 except:
-                    print "Error"
-                t_connect.join()
-                print "False"
+                    "error"
             else:
                 print ("Client already connected to server")
         elif command_input == 'disconnect':
@@ -197,18 +197,11 @@ def proc_packet():
             #         # TODO - Look inside packet for command
 
 
-def connect():
-    global client_state_temp
-    global server_window_size
-    global client_port
-    global server_seq_num
-    global server_port
-    global num_timeouts_syn_sent
-    global num_timeouts_syn_ack_hash
-    global client_timer
-    global server_hash_challenge
+def connect(client_state_temp, num_timeouts_syn_sent, num_timeouts_syn_ack_hash):
     global client_state_master
+    global server_hash_challenge
     global is_connected
+    global client_timer
 
     while True:
         # Check if timeouts have reached the max limit; if so, return False
@@ -222,18 +215,23 @@ def connect():
         if client_state_temp == State.RCV:
             rtp_header, payload = recv()
             client_timer.cancel()
-            # server_seq_num, server_ack_num, checksum, server_window_size, ack, syn, fin, nack, server_ip_address_long, \
-            #     server_port = unpack_rtpheader(rtp_header)
 
-            # Check checksum; if bad, drop packet, send nack, and go back to recv
+            # Check checksum; if bad, drop packet, don't send nack, and go back to recv
             if not check_checksum(rtp_header.get_checksum(), rtp_header, payload):
-                client_timer = threading.Timer(TIMEOUT_TIME, connect_timeout)
+                client_timer = threading.Timer(TIMEOUT_TIME, connect_timeout, args=(num_timeouts_syn_sent,
+                                                                                    num_timeouts_syn_ack_hash))
                 client_timer.start()
-                client_state_temp = State.RCV
+                #client_state_temp = State.RCV
+                client_state_temp = client_state_master
+                # TODO - Lets not nack; lets only nack on things that are wrong in protocol, not checksums
 
                 if is_debug:
                     print "Checksum checker detected error on challenge from server, sending NACK"
-                send_nack()
+                #send_nack()
+
+            # elif not correct_ack:
+            #     #send_nack()
+            #     print "Not correct ack"
 
             # If nack recv, send temp state to master state seen last
             elif rtp_header.get_nack():
@@ -250,7 +248,7 @@ def connect():
 
             # If not syn and ack, then master and temp states change to ESTABLISHED
             elif not rtp_header.get_syn() and rtp_header.get_ack():
-                client_state_temp = State.ESTABLISHED
+                #client_state_temp = State.ESTABLISHED
                 client_state_master = State.ESTABLISHED
                 if is_debug:
                     print "Received ACK from server, connection established"
@@ -259,7 +257,8 @@ def connect():
 
         # Send request to connect
         if client_state_temp == State.SYN_SENT:
-            client_timer = threading.Timer(TIMEOUT_TIME, connect_timeout)
+            client_timer = threading.Timer(TIMEOUT_TIME, connect_timeout, args=(num_timeouts_syn_sent,
+                                                                                num_timeouts_syn_ack_hash))
             client_timer.start()
             client_state_temp = State.RCV
 
@@ -269,7 +268,8 @@ def connect():
 
         # Send hash_of_hash to finalize 4-way handshake
         if client_state_temp == State.SYN_SENT_HASH:
-            client_timer = threading.Timer(TIMEOUT_TIME, connect_timeout)
+            client_timer = threading.Timer(TIMEOUT_TIME, connect_timeout, args=(num_timeouts_syn_sent,
+                                                                                num_timeouts_syn_ack_hash))
             client_timer.start()
             client_state_temp = State.RCV
 
@@ -278,20 +278,16 @@ def connect():
             send_synack(server_hash_challenge)
 
 
-def connect_timeout():
-    global client_state_temp
-    global num_timeouts_syn_sent
-    global num_timeouts_syn_ack_hash
+def connect_timeout(num_timeouts_syn_sent, num_timeouts_syn_ack_hash):
 
     if client_state_master == State.SYN_SENT:
         client_state_temp = State.SYN_SENT
         num_timeouts_syn_sent += 1
-        return connect()
+        connect(client_state_temp, num_timeouts_syn_sent, num_timeouts_syn_ack_hash)
     elif client_state_master == State.SYN_SENT_HASH:
         client_state_temp = State.SYN_SENT_HASH
         num_timeouts_syn_ack_hash += 1
-        return connect()
-
+        connect(client_state_temp, num_timeouts_syn_sent, num_timeouts_syn_ack_hash)
 
 
 def get(filename):
@@ -314,11 +310,7 @@ def calc_client_seq_ack_nums(payload):
     global client_ack_num
 
     client_seq_num = client_ack_num
-
-    if len(payload) == 0:
-        client_ack_num = client_seq_num + 1
-    else:
-        client_ack_num = client_seq_num + len(payload)
+    client_ack_num = client_seq_num + len(payload) + 1
 
 
 def send(ack, syn, fin, nack, payload):
@@ -326,32 +318,26 @@ def send(ack, syn, fin, nack, payload):
     # Change sequence and acknowledge numbers to correct ones before sending to server
     calc_client_seq_ack_nums(payload)
 
+    # Calculate checksum on rtp_header and payload with a blank checksum
     checksum = 0
     rtp_header_obj = RTPHeader(client_seq_num, server_ack_num, checksum, client_window_size, ack, syn, fin, nack,
                                CLIENT_IP_ADDRESS_LONG, client_port)
     packed_rtp_header = pack_rtpheader(rtp_header_obj)
-
-    # if payload is not None:
     packet = packed_rtp_header + payload
-    # else:
-    #     packet = packed_rtp_header
-
     checksum = sum(bytearray(packet))
 
+    # Install checksum into rtp_header and package up with payload
     rtp_header_obj = RTPHeader(client_seq_num, server_ack_num, checksum, client_window_size, ack, syn, fin, nack,
                                CLIENT_IP_ADDRESS_LONG, client_port)
     packed_rtp_header = pack_rtpheader(rtp_header_obj)
-
-    # if payload is not None:
     packet = packed_rtp_header + payload
-    # else:
-    #     packet = packed_rtp_header
+
     if is_debug:
         print "Sending:"
         print '\tClient Seq Num:\t' + str(client_seq_num)
-        print '\tClient ACK Num:\t' + str(client_ack_num)
+        print '\tServer ACK Num:\t' + str(server_ack_num)
         print '\tChecksum:\t' + str(checksum)
-        print '\tWindow:\t\t' + str(client_window_size)
+        print '\tClient Window:\t' + str(client_window_size)
         print '\tACK:\t\t' + str(ack)
         print '\tSYN:\t\t' + str(syn)
         print '\tFIN:\t\t' + str(fin)
@@ -359,12 +345,13 @@ def send(ack, syn, fin, nack, payload):
         print '\tClient IP Long:\t' + str(CLIENT_IP_ADDRESS_LONG)
         print '\tClient Port:\t' + str(client_port)
         print '\tPayload:\t' + str(payload)
-        print '\tSze-Pyld:\t' + str(payload)
+        print '\tSze-Pyld:\t' + str(len(payload))
 
     sock.sendto(packet, net_emu_addr)
 
 
-def calc_server_seq_ack_nums(payload):
+def calc_server_ack_num(payload):
+    global server_seq_num
     global server_ack_num
 
     if len(payload) == 0:
@@ -374,18 +361,25 @@ def calc_server_seq_ack_nums(payload):
 
 
 
+def check_sent_ack(rtp_header):
+    if client_ack_num == rtp_header.get_ack():
+        return True
+    return False
+
 def recv():
-    global server_seq_num
-    global client_window_size
 
     recv_packet = sock.recvfrom(BUFFER_SIZE)
     packet = recv_packet[0]
     rtp_header = packet[0:21]
-    rtp_header = unpack_rtpheader(rtp_header)
     payload = packet[21:]
+    rtp_header = unpack_rtpheader(rtp_header, payload)
+
     print 'Received Payload (may be corrupted):'
     print str(payload)
-    calc_server_seq_ack_nums(payload)
+
+    #correct_ack = check_sent_ack(rtp_header)
+
+    #calc_server_seq_ack_nums(payload)
 
     return rtp_header, payload
 
@@ -399,14 +393,15 @@ def pack_rtpheader(rtp_header):
     return rtp_header
 
 
-def unpack_rtpheader(packed_rtp_header):
+def unpack_rtpheader(packed_rtp_header, payload):
     global server_window_size
     global server_seq_num
+    global server_ack_num
     global server_port
 
     unpacked_rtp_header = struct.unpack('!LLHLBLH', packed_rtp_header)  # 21 bytes
-
     server_seq_num = unpacked_rtp_header[0]
+    calc_server_ack_num(payload)
     client_ack_num_test = unpacked_rtp_header[1]
     checksum = unpacked_rtp_header[2]
     server_window_size = unpacked_rtp_header[3]
@@ -415,12 +410,12 @@ def unpack_rtpheader(packed_rtp_header):
     server_ip_address_long = unpacked_rtp_header[5]
     server_port = unpacked_rtp_header[6]
     rtp_header_obj = RTPHeader(server_seq_num, client_ack_num_test, checksum, server_window_size, ack, syn, fin, nack,
-                           server_ip_address_long, server_port)
+                               server_ip_address_long, server_port)
 
     if is_debug:
         print "Unpacking Header:"
         print '\tServer Seq Num:\t' + str(server_seq_num)
-        print '\tServer ACK Num:\t' + str(server_ack_num)
+        print '\tClient ACK Num:\t' + str(client_ack_num_test)
         print '\tChecksum:\t' + str(checksum)
         print '\tServer Window:\t' + str(server_window_size)
         print '\tACK:\t\t' + str(ack)
@@ -457,8 +452,9 @@ def check_checksum(checksum, rtp_header, payload):
 
     flags = pack_bits(rtp_header.get_ack(), rtp_header.get_syn(), rtp_header.get_fin(), rtp_header.get_nack())
     packed_checksum = struct.pack('!L', checksum)
-    packed_rtp_header = struct.pack('!LLHLBLH', rtp_header.get_seq_num(), rtp_header.get_ack_num(), checksum,
-                                    client_window_size, flags, CLIENT_IP_ADDRESS_LONG, client_port)
+    packed_rtp_header = struct.pack('!LLHLBLH', rtp_header.get_seq_num(), rtp_header.get_ack_num(),
+                                    rtp_header.get_checksum(), rtp_header.get_window(), flags, rtp_header.get_ip(),
+                                    rtp_header.get_port())
 
     data = packed_rtp_header + payload
 
@@ -584,16 +580,17 @@ if __name__ == "__main__":
     client_port = ''
     CLIENT_IP_ADDRESS = socket.gethostbyname(socket.gethostname())
     CLIENT_IP_ADDRESS_LONG = struct.unpack("!L", socket.inet_aton(CLIENT_IP_ADDRESS))[0]
-    client_state_temp = State.SYN_SENT
+    #client_state_temp = State.SYN_SENT
     client_seq_num = 0  # random.randint(0, 2**32-1)
     client_ack_num = client_seq_num
     client_timer = ''
     CLIENT_EMPTY_PAYLOAD = ''
-    num_timeouts_syn_sent = 0
-    num_timeouts_syn_ack_hash = 0
+    #num_timeouts_syn_sent = 0
+    #num_timeouts_syn_ack_hash = 0
     TIMEOUT_MAX_LIMIT = 3
-    TIMEOUT_TIME = 5
+    TIMEOUT_TIME = 1
     client_state_master = State.SYN_SENT
+    is_connected = False
 
     # NetEmu
     net_emu_ip_address = ''
