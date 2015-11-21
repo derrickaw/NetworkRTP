@@ -1,4 +1,5 @@
 import Queue
+import datetime
 import hashlib
 import os
 import random
@@ -315,8 +316,12 @@ def send_and_wait_for_ack(payload, num_timeouts):
             send_and_wait_for_ack(payload, num_timeouts + 1)
     if packet.get_header().get_ip() == net_emu_ip_address_long and \
         packet.get_header().get_port() == net_emu_port and \
-            packet.get_header().get_ack_num() == client_ack_num:
-        pass
+            packet.get_header().get_ack_num() == client_seq_num + len(payload) + 1 and \
+            packet.get_header().get_ack() and not packet.get_header().get_nack:
+        return True
+    else:
+        print('.'),
+        send_and_wait_for_ack(payload, 0)
 
 
 def post(filename):
@@ -331,8 +336,59 @@ def post(filename):
     if not send_and_wait_for_ack(init_payload, 0):
         print 'Could not retrieve response, POST Failed'
         return
+    else:
+        while True:
+            data = file_handle.read(1024)
+            if not data:
+                break
+            packet_list.append(Packet(RTPHeader(0, 0, 0, 0, 0, 0, 0, 0, net_emu_ip_address_long, net_emu_port), data))
+            print('|'),
+        next_packet_to_send = 0
+        num_timeouts = 0
+        # repeat infinitely if need be, will be broken out of if TIMEOUT_MAX_LIMIT timeouts are reached
+        while True:
+            # send (server window size) # of un-acknowledged packets in the packet list
+            packets_sent_in_curr_window = 0
+            for x in range(next_packet_to_send, len(packet_list) - 1):
+                if not packet_list[x].get_acknowledged():  # if it has not been acknowledged
+                    send(0, 0, 0, 0, packet_list[x].payload)
+                    packets_sent_in_curr_window += 1
+                    if packets_sent_in_curr_window == server_window_size:
+                        break
+            # wait_for_acks processes all the packets received in the 5 seconds after sending the window,
+            # and sets the next packet to send
+            new_next_packet_to_send = wait_for_acks(datetime.datetime.now(), next_packet_to_send)
+            # if we have acknowledged all of the packets, then we are done
+            if next_packet_to_send == -1:
+                break
+            # if we timeout then increment the number of timeouts
+            if new_next_packet_to_send == next_packet_to_send:
+                num_timeouts += 1
+            else:
+                # if we did receive reset timeouts
+                num_timeouts = 0
+            if num_timeouts == TIMEOUT_MAX_LIMIT:
+                print 'Server Unresponsive, POST failed'
+                break
 
-    file_handle.read(123)
+
+def wait_for_acks(time_of_calling, next_packet_to_send):
+    global server_window_size
+    global server_seq_num
+
+    server_windows_received = []
+    server_seq_num_received = []
+    while True:
+        if datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
+            break
+        new_packet = process_queue.get(True, 1)
+    if not len(server_windows_received) == 0:
+        pass
+
+    for i in range(next_packet_to_send, len(packet_list) - 1):
+        if not packet_list[i].get_acknowledged():
+            return i
+    return -1
 
 
 def calc_client_seq_ack_nums(payload):
@@ -385,7 +441,7 @@ def send(ack, syn, fin, nack, payload):
         print '\tClient IP Long:\t' + str(CLIENT_IP_ADDRESS_LONG)
         print '\tClient Port:\t' + str(client_port)
         print '\tPayload:\t' + str(payload)
-        print '\tSze-Pyld:\t' + str(payload)
+        print '\tSze-Pyld:\t' + str(len(payload))
 
     sock.sendto(packet, net_emu_addr)
 
@@ -589,15 +645,19 @@ class RTPHeader:
 
 
 class Packet:
-    def __init__(self, header, payload):
+    def __init__(self, header, payload, acknowledged):
         self.header = header
         self.payload = payload
+        self.acknowledged = acknowledged
 
     def get_header(self):
         return self.header
 
     def get_payload(self):
         return self.payload
+
+    def get_acknowledged(self):
+        return self.acknowledged
 
 
 if __name__ == "__main__":
