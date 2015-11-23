@@ -560,6 +560,9 @@ def send_and_wait_for_ack(payload, num_timeouts):
 
 
 def post(filename):
+    global total_packets_sent
+    global packet_list
+
     try:
         file_handle = open(filename, 'r')
     except IOError:
@@ -576,12 +579,23 @@ def post(filename):
             data = file_handle.read(1024)
             if not data:
                 break
-            packet_list.append(Packet(RTPHeader(0, 0, 0, 0, 0, 0, 0, 0, net_emu_ip_address_long, net_emu_port), data))
-            print('|'),
+            packet_list.append(Packet(RTPHeader(0, 0, 0, 0, 0, 0, 0, 0, net_emu_ip_address_long, net_emu_port), data,
+                                      False))
         next_packet_to_send = 0
         num_timeouts = 0
+        total_packets_sent = 0
         # repeat infinitely if need be, will be broken out of if TIMEOUT_MAX_LIMIT timeouts are reached
         while True:
+            print '{0:.1f}%%'.format(total_packets_sent/len(packet_list))
+            if is_debug:
+                print('\t\t'),
+                for i in range(0, len(packet_list) - 1):
+                    print(i),
+                print ''
+                print 'ACK''ed:\t',
+                for j in range(0, len(packet_list) - 1):
+                    if packet_list[j].get_acknowledged():
+                        print(j),
             # send (server window size) # of un-acknowledged packets in the packet list
             packets_sent_in_curr_window = 0
             for x in range(next_packet_to_send, len(packet_list) - 1):
@@ -610,6 +624,8 @@ def post(filename):
 def wait_for_acks(time_of_calling, next_packet_to_send):
     global server_window_size
     global server_seq_num
+    global total_packets_sent
+    global packet_list
 
     server_windows_received = []
     server_seq_num_received = []
@@ -617,9 +633,15 @@ def wait_for_acks(time_of_calling, next_packet_to_send):
         if datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
             break
         new_packet = process_queue.get(True, 1)
-    if not len(server_windows_received) == 0:
-        pass
-
+        seq_num = new_packet.get_header().get_ack_num() - 1025
+        for i in packet_list:
+            if i.get_header().seq_num() == seq_num:
+                i.acknowledged = True
+                total_packets_sent += 1
+                server_windows_received.append(i.get_header().get_window())
+                server_seq_num_received.append(i.get_header().get_seq_num())
+    server_seq_num = max(server_seq_num_received)
+    server_window_size = min(server_windows_received)
     for i in range(next_packet_to_send, len(packet_list) - 1):
         if not packet_list[i].get_acknowledged():
             return i
@@ -892,6 +914,7 @@ if __name__ == "__main__":
     packet_list = []
     is_connected = False
     is_disconnected = False
+    total_packets_sent = 0
 
     # NetEmu
     net_emu_ip_address = ''
