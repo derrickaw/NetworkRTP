@@ -645,7 +645,7 @@ def get(filename):
             # if we did receive reset timeouts
             num_timeouts = 0
         if num_timeouts == TIMEOUT_MAX_LIMIT:
-            print 'Server Unresponsive, POST failed'
+            print 'Server Unresponsive, GET failed'
             break
 
 
