@@ -102,9 +102,10 @@ def main(argv):
         t_proc = threading.Thread(target=proc_packet, args=())
         t_proc.daemon = True
         t_proc.start()
-        t_clear_clients = threading.Thread(target=clear_clients, args=())
-        t_clear_clients.daemon = True
-        t_clear_clients.start()
+        # Probably not thread safe and shouldn't be done; lets just check for State.CLOSED instead
+        # t_clear_clients = threading.Thread(target=clear_clients, args=())
+        # t_clear_clients.daemon = True
+        # t_clear_clients.start()
     except:
         print "Error"
 
@@ -218,9 +219,6 @@ def proc_packet():
 
             # Client exists but no GET or POST command
             elif client_loc is not None and payload_split is None:
-                #clientList[client_loc].set_client_seq_num(rtp_header.get_seq_num())
-
-                # TODO - 3 cases - 1) repeat on SYN and no ACK 2) repeat on SYN and ACK 3) first time on SYN and ACK
 
                 # Connection setup still in progress
                 if (rtp_header.get_syn() and rtp_header.get_ack()) or rtp_header.get_syn():
@@ -240,6 +238,11 @@ def proc_packet():
 
                 # Disconnect is in operation
                 elif rtp_header.get_fin() or clientList[client_loc].in_disconnect_state():
+
+                    if rtp_header.get_ack_num() == clientList[client_loc].get_server_ack_num():
+                        clientList[client_loc].calc_client_server_recv_seq_ack_nums(payload)
+
+
                     clientList[client_loc].update_on_receive(rtp_header.get_ack(), rtp_header.get_syn(),
                                                              rtp_header.get_fin(), rtp_header.get_nack())
 
@@ -409,7 +412,8 @@ def unpack_bits(bit_string):
 
 def check_client_list(client_ip_address, client_port):
     for i in range(len(clientList)):
-        if clientList[i].get_sender_ip() == client_ip_address and clientList[i].get_sender_port() == client_port:
+        if clientList[i].get_sender_ip() == client_ip_address and clientList[i].get_sender_port() == client_port and \
+            clientList[i].get_client_state != State.CLOSED:
             if is_debug:
                 print 'Client found in connection list'
             return i
@@ -613,10 +617,7 @@ class Connection:
 
         print self.state
         # Todo - need to reset state back to seq and ack numbers at established state
-        if self.state == State.LAST_ACK:
-            self.timer.cancel()
-            if not syn and ack and not fin:
-                self.state = State.CLOSED
+
 
         if self.state == State.ESTABLISHED:
             if syn and ack:
@@ -627,9 +628,20 @@ class Connection:
                 send_ack(self.server_seq_num, self.client_ack_num)
 
         if self.state == State.CLOSE_WAIT:
+            self.state = State.LAST_ACK
+            self.server_seq_num += 1
             self.calc_client_server_send_seq_ack_nums(EMPTY_PAYLOAD)
-            self.timer = threading.Timer(TIMEOUT_TIME, self.timeout(State.ESTABLISHED))
+            self.timer = threading.Timer(TIMEOUT_TIME, self.timeout(State.CLOSE_WAIT))
             send_fin(self.server_seq_num, self.client_ack_num)
+
+        if self.state == State.LAST_ACK:
+            self.timer.cancel()
+            if not syn and ack and not fin:
+                self.state = State.CLOSED
+            else:
+                self.state = State.CLOSE_WAIT
+
+
 
         if self.state == State.SYN_RECEIVED:
             if syn and not ack:
