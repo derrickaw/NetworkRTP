@@ -309,6 +309,11 @@ def connect(client_state_temp, num_timeouts):
                     is_connected = True
                     break
 
+                # What if server sends something else? # TODO
+                else:
+                    pass
+
+
         # Send request to connect
         if client_state_temp == State.SYN_SENT:
             client_timer = threading.Timer(TIMEOUT_TIME, connect_timeout, args=(num_timeouts,))
@@ -342,6 +347,7 @@ def disconnect(client_state_temp, num_timeouts):
             client_timer.cancel()
             print "Connection process timed-out, try again later; re-establishing full connection with server\n"
             client_state_master = State.ESTABLISHED
+            # TODO - Reset state - need to save state
             break
 
         if client_state_temp == State.RCV:
@@ -359,51 +365,54 @@ def disconnect(client_state_temp, num_timeouts):
 
             # Check for duplicate packet
             elif rtp_header.get_ack_num() == client_seq_num:
+                print "*"*50
                 client_state_temp = client_state_master
 
             else:
                 calc_client_server_recv_seq_ack_nums(rtp_header, payload)
 
-            # Check if correct seq and ack nums were sent
-            if not check_packet_seq_ack_nums(rtp_header, payload):
-                client_state_temp = client_state_master
-                print "Not correct ack"
+                # Check if correct seq and ack nums were sent
+                if not check_packet_seq_ack_nums(rtp_header, payload):
+                    client_state_temp = client_state_master
+                    print "Not correct ack"
 
-            # If nack recv, send temp state to master state seen last
-            elif rtp_header.get_nack():
-                client_state_temp = client_state_master
+                # If nack recv, send temp state to master state seen last
+                elif rtp_header.get_nack():
+                    client_state_temp = client_state_master
 
-            # If FIN + ACK, then master and temp states change to TIME_WAIT
-            elif rtp_header.get_ack() and rtp_header.get_fin():
-                client_state_temp = State.TIME_WAIT
-                client_state_master = State.TIME_WAIT
+                # If we receive another FIN from server, then we can go straight to TIME_WAIT and send the ACK
 
-            # If ACK and current state is CLOSING, then master and temp states change to TIME_WAIT
-            elif rtp_header.get_ack() and not rtp_header.get_fin() and client_state_master == State.CLOSING:
-                client_state_temp = State.TIME_WAIT
-                client_state_master = State.TIME_WAIT
+                # If FIN and current state is FIN_WAIT_2, then master and temp states change to TIME_WAIT
+                elif not rtp_header.get_ack() and rtp_header.get_fin() and client_state_master == State.FIN_WAIT_2:
+                    client_state_temp = State.TIME_WAIT
+                    client_state_master = State.TIME_WAIT
 
-            # If FIN and current state is FIN_WAIT_2, then master and temp states change to TIME_WAIT
-            elif not rtp_header.get_ack() and rtp_header.get_fin() and client_state_master == State.FIN_WAIT_2:
-                client_state_temp = State.TIME_WAIT
-                client_state_master = State.TIME_WAIT
+                # If ACK and current state is FIN_WAIT_1, then master and temp states change to FIN_WAIT_2
+                elif rtp_header.get_ack() and not rtp_header.get_fin() and client_state_temp == State.FIN_WAIT_1:
+                    client_state_temp = State.FIN_WAIT_2
+                    client_state_master = State.FIN_WAIT_2
 
-            # If ACK and current state is FIN_WAIT_1, then master and temp states change to FIN_WAIT_2
-            elif rtp_header.get_ack() and not rtp_header.get_fin() and client_state_master == State.FIN_WAIT_1:
-                client_state_temp = State.FIN_WAIT_2
-                client_state_master = State.FIN_WAIT_2
 
-            # If FIN and current state is FIN_WAIT_1, then master and temp states change to CLOSING
-            elif not rtp_header.get_ack() and rtp_header.get_fin() and client_state_master == State.FIN_WAIT_1:
-                client_state_temp = State.CLOSING
-                client_state_master = State.CLOSING
+
+
+                # # If FIN + ACK, then master and temp states change to TIME_WAIT
+                # elif rtp_header.get_ack() and rtp_header.get_fin():
+                #     client_state_temp = State.TIME_WAIT
+                #     client_state_master = State.TIME_WAIT
+
+                # # If ACK and current state is CLOSING, then master and temp states change to TIME_WAIT
+                # elif rtp_header.get_ack() and not rtp_header.get_fin() and client_state_master == State.CLOSING:
+                #     client_state_temp = State.TIME_WAIT
+                #     client_state_master = State.TIME_WAIT
+
+                # # If FIN and current state is FIN_WAIT_1, then master and temp states change to CLOSING
+                # elif not rtp_header.get_ack() and rtp_header.get_fin() and client_state_master == State.FIN_WAIT_1:
+                #     client_state_temp = State.CLOSING
+                #     client_state_master = State.CLOSING
 
         # Send initial request to disconnect
         if client_state_temp == State.ESTABLISHED:
-            client_timer = threading.Timer(TIMEOUT_TIME, disconnect_timeout, args=(num_timeouts,))
-            client_timer.start()
-            client_state_master = State.FIN_WAIT_1
-            client_state_temp = State.RCV
+            client_state_temp = State.FIN_WAIT_1
 
             if is_debug:
                 print "Sending initial FIN to server"
@@ -416,47 +425,69 @@ def disconnect(client_state_temp, num_timeouts):
             client_state_temp = State.RCV
 
             if is_debug:
-                print "Sending ACK to server to move to TIME_OUT or CLOSING state"
-            send_ack()
+                print "Receiving ACK from server to move to FIN_WAIT_2 state"
 
-        # Moving to TIME_OUT state
+        # Moving to rcv state hoping to move to TIME_WAIT state
         if client_state_temp == State.FIN_WAIT_2:
             client_timer = threading.Timer(TIMEOUT_TIME, disconnect_timeout, args=(num_timeouts,))
             client_timer.start()
             client_state_temp = State.RCV
 
             if is_debug:
-                print "Sending ACK to server to move to TIME_OUT state"
-            send_ack()
+                print "Receiving FIN from server to move to TIME_WAIT state"
+            #send_ack()
 
-        # Waiting for ACK from server
-        if client_state_temp == State.CLOSING:
+        # # Waiting for ACK from server
+        # if client_state_temp == State.CLOSING:
+        #     client_timer = threading.Timer(TIMEOUT_TIME, disconnect_timeout, args=(num_timeouts,))
+        #     client_timer.start()
+        #     client_state_temp = State.RCV
+        #
+        #     if is_debug:
+        #         print "Waiting for ACK from server to move to TIME_OUT state"
+
+        # Send ACK to complete disconnect state; go to receive state in case something comes in from server; otherwise
+        # after time allotment; go to CLOSED state
+        if client_state_temp == State.TIME_WAIT:
             client_timer = threading.Timer(TIMEOUT_TIME, disconnect_timeout, args=(num_timeouts,))
             client_timer.start()
             client_state_temp = State.RCV
 
             if is_debug:
-                print "Waiting for ACK from server to move to TIME_OUT state"
+                print "Sending ACK to server to move to TIME_WAIT state"
+            send_ack()
 
-        # Moving to CLOSED state
-        if client_state_temp == State.TIME_WAIT:
-            client_state_master = State.CLOSED
+        # Timeout is complete; connection is closed
+        if client_state_temp == State.CLOSED:
             if is_debug:
                 print "Connection is closed with server."
             is_disconnected = True
             break
 
+        print client_state_master
+
+        # Todo - maybe need to reset state back to seq and ack numbers at established state
+
 
 def disconnect_timeout(num_timeouts):
 
-    if client_state_master == State.SYN_SENT:
-        client_state_temp = State.SYN_SENT
+    global client_state_master
+
+    if client_state_master == State.ESTABLISHED:
+        client_state_temp = State.ESTABLISHED
         num_timeouts += 1
-        connect(client_state_temp, num_timeouts)
-    elif client_state_master == State.SYN_SENT_HASH:
-        client_state_temp = State.SYN_SENT_HASH
+        disconnect(client_state_temp, num_timeouts)
+
+    elif client_state_master == State.FIN_WAIT_2:
+        client_state_temp = State.ESTABLISHED
+        client_state_master = State.ESTABLISHED
         num_timeouts += 1
-        connect(client_state_temp, num_timeouts)
+        disconnect(client_state_temp, num_timeouts)
+
+    elif client_state_master == State.TIME_WAIT:
+        client_state_master = State.CLOSED
+        client_state_temp = State.CLOSED
+        disconnect(client_state_temp, num_timeouts)
 
 
 def check_packet_seq_ack_nums(rtp_header, payload):
@@ -928,8 +959,8 @@ if __name__ == "__main__":
     client_ack_num = client_seq_num
     client_timer = ''
     CLIENT_EMPTY_PAYLOAD = ''
-    TIMEOUT_MAX_LIMIT = 25
-    TIMEOUT_TIME = 1
+    TIMEOUT_MAX_LIMIT = 3
+    TIMEOUT_TIME = 5
     client_state_master = State.SYN_SENT
     packet_list = []
     is_connected = False
