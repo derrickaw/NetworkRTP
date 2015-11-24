@@ -21,6 +21,7 @@ def main(argv):
     global is_debug
     global is_connected
     global is_disconnected
+    global fin_terminate
 
     # Check for correct number of parameters
     if len(argv) < 3 or len(argv) > 4:
@@ -108,11 +109,18 @@ def main(argv):
     print "*"*80
     print
 
+    fin_listener = threading.Thread(target=listen_for_fin)
+    fin_listener.daemon = False
+
     while not is_disconnected:  # command_input != 'disconnect':
+        fin_listener.start()
         command_input = raw_input('Please enter command: ')
         if command_input == 'connect':
             if not is_connected:
                 # start connect
+                with fin_listen_termination_cv:
+                    fin_terminate = True
+                fin_listener.join()
                 try:
                     t_connect = threading.Thread(target=connect, args=(State.SYN_SENT, 0))
                     t_connect.daemon = True
@@ -125,6 +133,9 @@ def main(argv):
                 print ("Client already connected to server\n")
         elif command_input == 'disconnect':
             if is_connected:
+                with fin_listen_termination_cv:
+                    fin_terminate = True
+                fin_listener.join()
                 try:
                     t_disconnect = threading.Thread(target=disconnect, args=(State.ESTABLISHED, 0))
                     t_disconnect.daemon = True
@@ -141,16 +152,22 @@ def main(argv):
                     print("Invalid command: get requires secondary parameter\n")
                     continue
                 if is_connected:
-                    # Todo - check for input
+                    # TODO - check for input
+                    with fin_listen_termination_cv:
+                        fin_terminate = True
+                    fin_listener.join()
                     get(command_input_split[1])
                 else:
                     print('get not valid without existing connection\n')
             elif command_input_split[0] == 'post':
                 if len(command_input_split) != 2:
-                    # Todo - check for input
                     print("Invalid command: post requires secondary parameter\n")
                     continue
                 if is_connected:
+                    # TODO - check for input
+                    with fin_listen_termination_cv:
+                        fin_terminate = True
+                    fin_listener.join()
                     post(command_input_split[1])
                 else:
                     print('post not valid without existing connection\n')
@@ -160,16 +177,33 @@ def main(argv):
                     continue
                 try:
                     window_size = int(command_input_split[1])
+                    print('Client Receiving Window = %s' % command_input_split[1])
                 except ValueError:
                     print('Invalid window size (not a number): %s' % command_input_split[1])
                     continue
                 if window_size < 1 or window_size > 2**32 - 1:
                     print("Invalid window size; must be between 1-4294967295, inclusive\n")
                     continue
-                # TODO window()
-                print('window')
             else:
                 print("Command not recognized\n")
+
+
+def listen_for_fin():
+    while True:
+        try:
+            packet = process_queue.get(False)
+        except Queue.Empty:
+            with fin_listen_termination_cv:
+                if fin_terminate:
+                    return
+            continue
+        if packet.get_header().get_fin() == 1:
+            print 'Received termination from server, now disconnecting'
+            disconnect()
+        else:
+            # Why the hell do I have this packet in the first place? Put it back in the Queue and hope the owner sees it
+            process_queue.put(packet, True, TIMEOUT_TIME)
+            return
 
 
 def recv_packet():
@@ -500,7 +534,10 @@ def connect_timeout(num_timeouts):
 
 
 def get(filename):
-    pass
+    global total_packets_sent
+    global packet_list
+
+
 
 
 def send_and_wait_for_ack(payload, num_timeouts):
@@ -513,19 +550,19 @@ def send_and_wait_for_ack(payload, num_timeouts):
     except Queue.Empty:  # If after blocking there still was not a packet in the queue
         # If we have timed out TIMEOUT_MAX_LIMIT times, then cancel the operation
         if num_timeouts == TIMEOUT_MAX_LIMIT:
-            return False
+            return None
         else:
             # If we have timed out less than TIMEOUT_MAX_LIMIT times, then try again with num_timeouts incremented
             print('.'),
-            send_and_wait_for_ack(payload, num_timeouts + 1)
+            return send_and_wait_for_ack(payload, num_timeouts + 1)
     if packet.get_header().get_ip() == net_emu_ip_address_long and \
         packet.get_header().get_port() == net_emu_port and \
             packet.get_header().get_ack_num() == client_seq_num + len(payload) + 1 and \
             packet.get_header().get_ack() and not packet.get_header().get_nack:
-        return True
+        return packet.get_payload()
     else:
         print('.'),
-        send_and_wait_for_ack(payload, 0)
+        return send_and_wait_for_ack(payload, 0)
 
 
 def post(filename):
@@ -533,23 +570,23 @@ def post(filename):
     global packet_list
 
     try:
-        file_handle = open(filename, 'r')
+        file_handle = open(filename, 'rb')
     except IOError:
         print "Could not open file: {0}".format(filename)
         return
     del packet_list[:]  # clear out the list of packets
-    file_size = os.stat(filename).st_size
-    init_payload = 'POST|{0}|{1}'.format(filename, str(file_size))
+    while True:
+        data = file_handle.read(1024)
+        if not data:
+            break
+        packet_list.append(Packet(RTPHeader(0, 0, 0, 0, 0, 0, 0, 0, net_emu_ip_address_long, net_emu_port), data,
+                                  False))
+    file_handle.close()
+    init_payload = 'POST|{0}|{1}'.format(filename, str(len(packet_list)))
     if not send_and_wait_for_ack(init_payload, 0):
         print 'Could not retrieve response, POST Failed'
         return
     else:
-        while True:
-            data = file_handle.read(1024)
-            if not data:
-                break
-            packet_list.append(Packet(RTPHeader(0, 0, 0, 0, 0, 0, 0, 0, net_emu_ip_address_long, net_emu_port), data,
-                                      False))
         next_packet_to_send = 0
         num_timeouts = 0
         total_packets_sent = 0
@@ -573,14 +610,19 @@ def post(filename):
                     packets_sent_in_curr_window += 1
                     if packets_sent_in_curr_window == server_window_size:
                         break
+
+            # Use temp variable to see if we actually received any
+            curr_num_packets_sent = total_packets_sent
+
             # wait_for_acks processes all the packets received in the 5 seconds after sending the window,
             # and sets the next packet to send
-            new_next_packet_to_send = wait_for_acks(datetime.datetime.now(), next_packet_to_send)
+            next_packet_to_send = wait_for_acks(datetime.datetime.now(), next_packet_to_send)
+
             # if we have acknowledged all of the packets, then we are done
             if next_packet_to_send == -1:
                 break
             # if we timeout then increment the number of timeouts
-            if new_next_packet_to_send == next_packet_to_send:
+            if curr_num_packets_sent == next_packet_to_send:
                 num_timeouts += 1
             else:
                 # if we did receive reset timeouts
@@ -596,19 +638,28 @@ def wait_for_acks(time_of_calling, next_packet_to_send):
     global total_packets_sent
     global packet_list
 
+    # Look at all the windows and sequence numbers received
     server_windows_received = []
     server_seq_num_received = []
+
     while True:
+        # Stay in the loop for 5 seconds
         if datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
             break
-        new_packet = process_queue.get(True, 1)
-        seq_num = new_packet.get_header().get_ack_num() - 1025
+
+        # Try to pull something out of the Queue, block for a second, if there is nothing there, then go to the top
+        try:
+            new_packet = process_queue.get(True, 1)
+        except Queue.Empty:
+            continue
+
+        # Look through the packet list to find the packet that the ACK is referencing
         for i in packet_list:
-            if i.get_header().seq_num() == seq_num:
+            if i.get_header().seq_num() + len(i.get_payload()) == new_packet.get_header().get_ack_num():
                 i.acknowledged = True
                 total_packets_sent += 1
-                server_windows_received.append(i.get_header().get_window())
-                server_seq_num_received.append(i.get_header().get_seq_num())
+                server_windows_received.append(new_packet.get_header().get_window())
+                server_seq_num_received.append(new_packet.get_header().get_seq_num())
     server_seq_num = max(server_seq_num_received)
     server_window_size = min(server_windows_received)
     for i in range(next_packet_to_send, len(packet_list) - 1):
@@ -884,6 +935,8 @@ if __name__ == "__main__":
     is_connected = False
     is_disconnected = False
     total_packets_sent = 0
+    fin_listen_termination_cv = threading.Condition()
+    fin_terminate = False
 
     # NetEmu
     net_emu_ip_address = ''
