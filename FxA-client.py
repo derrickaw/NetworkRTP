@@ -22,6 +22,7 @@ def main(argv):
     global is_connected
     global is_disconnected
     global fin_terminate
+    global fin_listen_termination_lock
 
     # Check for correct number of parameters
     if len(argv) < 3 or len(argv) > 4:
@@ -113,14 +114,12 @@ def main(argv):
     fin_listener.daemon = False
 
     while command_input != 'disconnect':
-        fin_listener.start()
+        if is_connected:
+            fin_listener.start()
         command_input = raw_input('Please enter command: ')
         if command_input == 'connect':
             if not is_connected:
                 # start connect
-                with fin_listen_termination_cv:
-                    fin_terminate = True
-                fin_listener.join()
                 try:
                     t_connect = threading.Thread(target=connect, args=(0,)) # State.SYN_SENT, 0))
                     t_connect.daemon = True
@@ -133,7 +132,7 @@ def main(argv):
                 print ("Client already connected to server\n")
         elif command_input == 'disconnect':
             if is_connected:
-                with fin_listen_termination_cv:
+                with fin_listen_termination_lock:
                     fin_terminate = True
                 fin_listener.join()
                 try:
@@ -154,7 +153,7 @@ def main(argv):
                     continue
                 if is_connected:
                     # TODO - check for input
-                    with fin_listen_termination_cv:
+                    with fin_listen_termination_lock:
                         fin_terminate = True
                     fin_listener.join()
 
@@ -171,7 +170,7 @@ def main(argv):
                     continue
                 if is_connected:
                     # TODO - check for input
-                    with fin_listen_termination_cv:
+                    with fin_listen_termination_lock:
                         fin_terminate = True
                     fin_listener.join()
 
@@ -204,7 +203,7 @@ def listen_for_fin():
         try:
             packet = process_queue.get(False)
         except Queue.Empty:
-            with fin_listen_termination_cv:
+            with fin_listen_termination_lock:
                 if fin_terminate:
                     return
             continue
@@ -567,7 +566,26 @@ def calc_server_ack_num(rtp_header, payload):
 def get(filename):
     global total_packets_sent
     global packet_list
-    pass
+
+    packets_in_file = 0
+    init_payload = 'GET|' + filename
+    response = send_and_wait_for_ack(init_payload, 0)
+    if not response:
+        print 'Could not retrieve response, GET Failed'
+        return
+    get_response = response.split("|")
+    if not get_response[0] == 'GET' or not get_response[1] == filename:
+        print 'Acknowledgment not recognized, check file exists server-side, GET Failed'
+    packets_in_file = int(get_response[2])
+    data = []
+    next_packet_to_rec = 0
+    num_timeouts = 0
+    total_packets_rec = 0
+    while True:
+        print '{0:.1f}%%'.format(total_packets_rec/packets_in_file)
+    # somehow specify a list
+    for i in range(0, packets_in_file - 1):
+        data.append(0)
 
 
 def send_and_wait_for_ack(payload, num_timeouts):
@@ -966,7 +984,7 @@ if __name__ == "__main__":
     is_connected = False
     is_disconnected = False
     total_packets_sent = 0
-    fin_listen_termination_cv = threading.Condition()
+    fin_listen_termination_lock = threading.Lock()
     fin_terminate = False
 
     # NetEmu
