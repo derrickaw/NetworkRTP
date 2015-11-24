@@ -93,8 +93,8 @@ def main(argv):
     #     t_proc = threading.Thread(target=proc_packet, args=())
     #     t_proc.daemon = True
     #     t_proc.start()
-    except:
-        print "Error"
+    except RuntimeError:
+        print "Error creating/starting client slave thread(s)"
 
     t_connect = ''
 
@@ -126,9 +126,9 @@ def main(argv):
                     t_connect.daemon = True
                     t_connect.start()
                     print "Establishing connection..."
-                    time.sleep(TIMEOUT_TIME) # Allow connection to establish before printing a new command line; more for format
-                except:
-                    "error\n"
+                    t_connect.join()  # TODO - I think this is what you want
+                except RuntimeError:
+                    "Error creating/starting client connect thread"
             else:
                 print ("Client already connected to server\n")
         elif command_input == 'disconnect':
@@ -141,9 +141,9 @@ def main(argv):
                     # t_disconnect.daemon = True
                     # t_disconnect.start()
                     print "Trying to disconnect..."
-                    time.sleep(TIMEOUT_TIME) # Stay here until disconnect is complete
-                except:
-                    "Error\n"
+                    # t_disconnect.join()  # TODO - I think this is what you want
+                except RuntimeError:
+                    "Error creating/starting client disconnect thread"
             else:
                 print "There must be a connection with the server to disconnect.  Try connecting first."
         else:
@@ -157,7 +157,12 @@ def main(argv):
                     with fin_listen_termination_cv:
                         fin_terminate = True
                     fin_listener.join()
-                    get(command_input_split[1])
+
+                    # startup get thread
+                    get_t = threading.Thread(target=get, args=(command_input_split[1],))
+                    get_t.daemon = False
+                    get_t.start()
+                    get_t.join()  # TODO - block for now, allow multiple calls later
                 else:
                     print('get not valid without existing connection\n')
             elif command_input_split[0] == 'post':
@@ -169,7 +174,12 @@ def main(argv):
                     with fin_listen_termination_cv:
                         fin_terminate = True
                     fin_listener.join()
-                    post(command_input_split[1])
+
+                    # startup post thread
+                    post_t = threading.Thread(target=post, args=(command_input_split[1],))
+                    post_t.daemon = False
+                    post_t.start()
+                    post_t.join()  # TODO - block for now, allow multiple calls later
                 else:
                     print('post not valid without existing connection\n')
             elif command_input_split[0] == 'window':
@@ -326,7 +336,6 @@ def complete_challenge(challenge_packet, num_timeouts):
         return True
 
 
-
 def disconnect(client_state_temp, num_timeouts):
 
     global client_state_master
@@ -384,11 +393,6 @@ def disconnect(client_state_temp, num_timeouts):
                     client_state_temp = State.FIN_WAIT_2
                     client_state_master = State.FIN_WAIT_2
 
-
-
-
-
-
         # Send initial request to disconnect
         if client_state_temp == State.ESTABLISHED:
             client_state_temp = State.FIN_WAIT_1
@@ -418,7 +422,6 @@ def disconnect(client_state_temp, num_timeouts):
             # if is_debug:
             #     print "Receiving FIN from server to move to TIME_WAIT state"
 
-
         # # Send ACK to complete disconnect state; go to receive state in case something comes in from server; otherwise
         # # after time allotment; go to CLOSED state
         # if client_state_temp == State.TIME_WAIT:
@@ -441,8 +444,6 @@ def disconnect(client_state_temp, num_timeouts):
 
         # Todo - maybe need to reset state back to seq and ack numbers at established state
 
-
-
         # # Waiting for ACK from server
         # if client_state_temp == State.CLOSING:
         #     client_timer = threading.Timer(TIMEOUT_TIME, disconnect_timeout, args=(num_timeouts,))
@@ -451,7 +452,6 @@ def disconnect(client_state_temp, num_timeouts):
         #
         #     if is_debug:
         #         print "Waiting for ACK from server to move to TIME_OUT state"
-
 
                         # # If FIN + ACK, then master and temp states change to TIME_WAIT
                 # elif rtp_header.get_ack() and rtp_header.get_fin():
@@ -467,7 +467,6 @@ def disconnect(client_state_temp, num_timeouts):
                 # elif not rtp_header.get_ack() and rtp_header.get_fin() and client_state_master == State.FIN_WAIT_1:
                 #     client_state_temp = State.CLOSING
                 #     client_state_master = State.CLOSING
-
 
 
 def disconnect_timeout(num_timeouts):
@@ -569,7 +568,6 @@ def get(filename):
     global total_packets_sent
     global packet_list
     pass
-
 
 
 def send_and_wait_for_ack(payload, num_timeouts):
@@ -858,11 +856,14 @@ def send_synack(payload):
 def send_ack():
     send(1, 0, 0, 0, CLIENT_EMPTY_PAYLOAD)
 
+
 def send_nack():
     send(0, 0, 0, 1, CLIENT_EMPTY_PAYLOAD)
 
+
 def send_fin():
     send(0, 0, 1, 0, CLIENT_EMPTY_PAYLOAD)
+
 
 class State:
     SYN_SENT = 1
