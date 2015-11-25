@@ -532,14 +532,14 @@ def get(filename):
         next_packet_to_rec = wait_for_data_and_acknowledge(datetime.datetime.now(), next_packet_to_rec)
         if next_packet_to_rec == -1:
                 break
-        if curr_num_packets_rec == next_packet_to_rec:
+        if curr_num_packets_rec == total_packets_rec:
                 num_timeouts += 1
         else:
             # if we did receive reset timeouts
             num_timeouts = 0
         if num_timeouts == TIMEOUT_MAX_LIMIT:
             print 'Server Unresponsive, GET failed'
-            break
+            return
     byte_data = []
     for packet in data:
         for i in range(0, len(packet.get_payload) - 1):
@@ -573,12 +573,12 @@ def wait_for_data_and_acknowledge(time_of_calling, next_packet_to_rec):
 
         # Look through the packet list to find the packet that the ACK is referencing
         for i in data:
-            if i.get_header().seq_num() == new_packet.get_header().get_seq_num():
+            if i.get_header().seq_num() == new_packet.get_header().get_seq_num() and not i.get_acknowledged():
                 total_packets_rec += 1
                 server_windows_received.append(new_packet.get_header().get_window())
                 server_seq_num_received.append(new_packet.get_header().get_seq_num())
                 i.payload = new_packet.get_payload()
-                send(1, 0, 0, 0, 0, i.get_header().seq_num() + len(i.get_header()))
+                send(1, 0, 0, 0, '', client_seq_num, i.get_header().seq_num() + len(i.get_payload()))
     server_seq_num = max(server_seq_num_received)
     server_window_size = min(server_windows_received)
     for i in range(next_packet_to_rec, len(data) - 1):
@@ -589,7 +589,7 @@ def wait_for_data_and_acknowledge(time_of_calling, next_packet_to_rec):
 
 def send_and_wait_for_ack(payload, num_timeouts):
     # Send out the packet
-    send(0, 0, 0, 0, payload)
+    send(0, 0, 0, 0, payload, client_seq_num, 0)
     packet = None
     try:
         # Wait until the process queue has a packet, block for TIMEOUT_TIME seconds
@@ -652,7 +652,7 @@ def post(filename):
             packets_sent_in_curr_window = 0
             for x in range(next_packet_to_send, len(packet_list) - 1):
                 if not packet_list[x].get_acknowledged():  # if it has not been acknowledged
-                    send(0, 0, 0, 0, packet_list[x].payload)
+                    send(0, 0, 0, 0, packet_list[x].payload, client_seq_num, 0)
                     packets_sent_in_curr_window += 1
                     if packets_sent_in_curr_window == server_window_size:
                         break
