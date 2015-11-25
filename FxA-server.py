@@ -274,7 +274,8 @@ def client_thread(client_loc):
             elif 'POST' == payload_split[0]:
                 if is_debug:
                     print 'POST'
-                post_t = threading.Thread(target=post, args=(client_loc,))
+                post_t = threading.Thread(target=post,
+                                          args=(payload_split[1], payload_split[2], clientList[client_loc], packet,))
                 post_t.daemon = True
                 post_t.start()
                 post_t.join()
@@ -302,16 +303,16 @@ def client_thread(client_loc):
                 if check_packet_match_ack_nums(client_loc, rtp_header):
                     clientList[client_loc].calc_client_server_recv_seq_ack_nums(payload)
                     disconnect_t = threading.Thread(target=clientList[client_loc].update_on_receive, args=(
-                                                    rtp_header.get_ack(), rtp_header.get_syn(), rtp_header.get_fin(),
-                                                    rtp_header.get_nack(), client_loc))
+                        rtp_header.get_ack(), rtp_header.get_syn(), rtp_header.get_fin(),
+                        rtp_header.get_nack(), client_loc))
                     disconnect_t.daemon = True
                     disconnect_t.start()
                     disconnect_t.join()
-                # clientList[client_loc].update_on_receive(rtp_header.get_ack(), rtp_header.get_syn(),
-                #                                          rtp_header.get_fin(), rtp_header.get_nack(), client_loc)
+                    # clientList[client_loc].update_on_receive(rtp_header.get_ack(), rtp_header.get_syn(),
+                    #                                          rtp_header.get_fin(), rtp_header.get_nack(), client_loc)
+
 
 def check_packet_match_ack_nums(client_loc, rtp_header):
-
     # Check server ack number matches seq number + payload
     if clientList[client_loc].server_ack_num == rtp_header.get_ack_num() or rtp_header.get_ack_num() == 0:
         return True
@@ -349,7 +350,6 @@ def clear_clients():
                 if clientList[i].get_client_state() == State.CLOSED:
                     if is_debug:
                         print 'Client in closed state found in connection list that needs deleting'
-                    # Todo - This is probably not thread safe; Should we just change IP address to 0 and leave in there?
                     clientList.remove(i)
 
         # wake up every five seconds and check the list
@@ -361,24 +361,24 @@ def clear_clients():
 #
 #     server_window_size = QUEUE_MAX_SIZE - process_queue.qsize()
 
-def send(server_seq_num, client_ack_num, ack, syn, fin, nack, payload):
+def send(server_seq_number, client_ack_num, ack, syn, fin, nack, payload):
     # Calculate checksum on rtp_header and payload with a blank checksum
     checksum = 0
-    rtp_header_obj = RTPHeader(server_seq_num, client_ack_num, checksum, server_window_size, ack, syn, fin, nack,
+    rtp_header_obj = RTPHeader(server_seq_number, client_ack_num, checksum, server_window_size, ack, syn, fin, nack,
                                SERVER_IP_ADDRESS_LONG, server_port)
     packed_rtp_header = pack_rtpheader(rtp_header_obj)
     packet = packed_rtp_header + payload
     checksum = sum(bytearray(packet))
 
     # Install checksum into rtp_header and package up with payload
-    rtp_header_obj = RTPHeader(server_seq_num, client_ack_num, checksum, server_window_size, ack, syn, fin, nack,
+    rtp_header_obj = RTPHeader(server_seq_number, client_ack_num, checksum, server_window_size, ack, syn, fin, nack,
                                SERVER_IP_ADDRESS_LONG, server_port)
     packed_rtp_header = pack_rtpheader(rtp_header_obj)
     packet = packed_rtp_header + payload
 
     if is_debug:
         print "Sending:"
-        print '\tServer Seq Num:\t' + str(server_seq_num)
+        print '\tServer Seq Num:\t' + str(server_seq_number)
         print '\tClient ACK Num:\t' + str(client_ack_num)
         print '\tChecksum:\t' + str(checksum)
         print '\tServer Window:\t' + str(server_window_size)
@@ -569,6 +569,79 @@ def wait_for_acks(time_of_calling, next_packet_to_send, packets_sent, list_of_pa
     return -1, to_return_packets_sent
 
 
+def post(filename, packets_in_file, conn_object, request_packet):
+    # send acknowledgment of POST request
+    send(conn_object.server_seq_num, conn_object.client_ack_num, 1, 0, 0, 0, None)
+    data = []
+    next_packet_to_rec = 0
+    num_timeouts = 0
+    total_packets_rec = 0
+    for i in range(0, packets_in_file - 1):
+        data.append(Packet(
+            RTPHeader((request_packet.get_header().get_seq_num() + len(request_packet.get_payload())) + i * 1024, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0), None, None))
+    while True:
+        print '{0:.1f}%%'.format(total_packets_rec / packets_in_file)
+        curr_num_packets_rec = total_packets_rec
+        next_packet_to_rec = wait_for_data_and_acknowledge(datetime.datetime.now(), next_packet_to_rec, data,
+                                                           total_packets_rec, conn_object)
+        if next_packet_to_rec == -1:
+            break
+        if curr_num_packets_rec == total_packets_rec:
+            num_timeouts += 1
+        else:
+            # if we did receive reset timeouts
+            num_timeouts = 0
+        if num_timeouts == TIMEOUT_MAX_LIMIT:
+            print 'Client Unresponsive, GET failed'
+            return
+    byte_data = []
+    for packet in data:
+        for i in range(0, len(packet.get_payload) - 1):
+            byte_data.append(packet.get_payload[i])
+    file_byte_array = bytearray(byte_data)
+    file_handle = open(filename, 'wb')
+    file_handle.write(file_byte_array)
+    file_handle.close()
+
+
+def wait_for_data_and_acknowledge(time_of_calling, next_packet_to_rec):
+    global server_window_size
+    global server_seq_num
+    global total_packets_rec
+    global data
+
+    # Look at all the windows and sequence numbers received
+    server_windows_received = []
+    server_seq_num_received = []
+
+    while True:
+        # Stay in the loop for 5 seconds
+        if datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
+            break
+
+        # Try to pull something out of the Queue, block for a second, if there is nothing there, then go to the top
+        try:
+            new_packet = process_queue.get(True, 1)
+        except Queue.Empty:
+            continue
+
+        # Look through the packet list to find the packet that the ACK is referencing
+        for i in data:
+            if i.get_header().seq_num() == new_packet.get_header().get_seq_num():
+                total_packets_rec += 1
+                server_windows_received.append(new_packet.get_header().get_window())
+                server_seq_num_received.append(new_packet.get_header().get_seq_num())
+                i.payload = new_packet.get_payload()
+                send(1, 0, 0, 0, 0, i.get_header().seq_num() + len(i.get_header()))
+    server_seq_num = max(server_seq_num_received)
+    server_window_size = min(server_windows_received)
+    for i in range(next_packet_to_rec, len(data) - 1):
+        if not data[i].get_payload():
+            return i
+    return -1
+
+
 def check_client_list(client_ip_address, client_port):
     with client_list_lock:
         for i in range(len(clientList)):
@@ -681,7 +754,6 @@ class Connection:
             return True
         return False
 
-
     # def reverse_state(self):
     #     self.server_seq_num = self.server_seq_num_last_state
     #     self.server_ack_num = self.server_ack_num_last_state
@@ -698,7 +770,7 @@ class Connection:
         else:
             self.server_ack_num = self.server_seq_num + len(payload)
 
-        # self.client_seq_num = self.client_ack_num
+            # self.client_seq_num = self.client_ack_num
 
     def calc_client_server_recv_seq_ack_nums(self, payload):
 
@@ -729,7 +801,7 @@ class Connection:
 
     def update_on_receive(self, ack, syn, fin, nack, client_loc):
 
-        #print self.state
+        # print self.state
         # Todo - need to reset state back to seq and ack numbers at established state
 
 
@@ -912,7 +984,7 @@ if __name__ == "__main__":
     EMPTY_PAYLOAD = ''
     TIMEOUT_MAX_LIMIT = 25
     TIMEOUT_TIME = 1
-    TIME_MAX = 60 # 1 minute
+    TIME_MAX = 60  # 1 minute
     QUEUE_MAX_SIZE = 10
 
     # Server
