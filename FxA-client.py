@@ -8,7 +8,6 @@ import socket
 import struct
 import sys
 import threading
-import time
 
 
 def main(argv):
@@ -116,7 +115,7 @@ def main(argv):
             if not is_connected:
                 # start connect
                 try:
-                    connect_t = threading.Thread(target=connect, args=(0,)) # State.SYN_SENT, 0))
+                    connect_t = threading.Thread(target=connect, args=(0,))
                     connect_t.daemon = True
                     connect_t.start()
                     print "Establishing connection..."
@@ -138,6 +137,7 @@ def main(argv):
                 except RuntimeError:
                     "Error creating/starting client disconnect thread"
             else:
+                command_input = "None" # Reset to keep the while loop going
                 print "There must be a connection with the server to disconnect.  Try connecting first."
         else:
             command_input_split = command_input.split(" ")
@@ -234,7 +234,7 @@ def recv_packet():
                 # Update server window size
                 server_window_size = rtp_header.get_window()
 
-                # Enqueue packet to main buffer queue
+                # Enqueue packet to main MAILBOX queue
                 processed_packet = Packet(rtp_header, payload, 0)
                 process_queue.put(processed_packet)
 
@@ -250,6 +250,9 @@ def connect(num_timeouts):
 
     if challenge_packet is None or not complete_challenge(challenge_packet, num_timeouts_updated):
         is_connected = False
+        if is_debug:
+            print "Didn't receive final ACK from server, connection not established"
+        print "Connection was refused...try again later."
     else:
         is_connected = True
 
@@ -267,7 +270,7 @@ def obtain_challenge_packet(num_timeouts):
     calc_client_server_send_seq_ack_nums(EMPTY_PAYLOAD)
 
     # Send out the SYN packet to start connection
-    send_syn()
+    send_syn(client_seq_num, server_ack_num)
     packet = None
     try:
         # Wait until the process queue has a packet, block for TIMEOUT_TIME seconds
@@ -309,7 +312,7 @@ def complete_challenge(challenge_packet, num_timeouts):
     calc_client_server_send_seq_ack_nums(challenge_packet.get_payload())
 
     # Send out the SYN+ACK+HASH packet to complete final handshake part
-    send_synack(challenge_packet.get_payload())
+    send_synack(challenge_packet.get_payload(), client_seq_num, server_ack_num)
     try:
         # Wait until the process queue has a packet, block for TIMEOUT_TIME seconds
         packet = process_queue.get(True, TIMEOUT_TIME)
@@ -345,10 +348,9 @@ def disconnect(num_timeouts):
 
     first_part_complete, num_timeouts_updated = begin_disconnect(num_timeouts)
 
-    if first_part_complete:
+    if first_part_complete and end_disconnect(num_timeouts_updated):
         print "disconnect true"
-        #is_disconnected = True
-
+        is_disconnected = True
 
 
 def begin_disconnect(num_timeouts):
@@ -361,7 +363,7 @@ def begin_disconnect(num_timeouts):
     calc_client_server_send_seq_ack_nums(EMPTY_PAYLOAD)
 
     # Send out the SYN+ACK+HASH packet to complete final handshake part
-    send_fin()
+    send_fin(client_seq_num, server_ack_num)
     try:
         # Wait until the process queue has a packet, block for TIMEOUT_TIME seconds
         packet = process_queue.get(True, TIMEOUT_TIME)
@@ -391,164 +393,46 @@ def begin_disconnect(num_timeouts):
         return True, num_timeouts
 
 def end_disconnect(num_timeouts):
-    pass
 
+    global client_state_master
+    global client_seq_num
+    global server_ack_num
 
+    try:
+        # Wait until the process queue has a packet, block for TIMEOUT_TIME seconds
+        packet = process_queue.get(True, TIMEOUT_TIME)
+    except Queue.Empty:  # If after blocking there still was not a packet in the queue
+        # If we have timed out TIMEOUT_MAX_LIMIT times, then cancel the operation
+        if num_timeouts == TIMEOUT_MAX_LIMIT:
+            return False
+        else:
+            # If we have timed out less than TIMEOUT_MAX_LIMIT times, then try again with num_timeouts incremented
+            print('.'),
+            return end_disconnect(num_timeouts + 1)
 
+    rtp_header = packet.get_header()
+    payload = packet.get_payload()
 
+    # Increment and save counters
+    client_seq_num_temp = client_seq_num
+    server_ack_num_temp = server_ack_num
+    calc_client_server_recv_seq_ack_nums(rtp_header, payload)
 
-# def disconnect(client_state_temp, num_timeouts):
-#
-#     global client_state_master
-#     global client_timer
-#     global is_disconnected
-#
-#     while True:
-#         # Check if timeouts have reached the max limit; if so, return back to Established state
-#         if num_timeouts > TIMEOUT_MAX_LIMIT:
-#             client_timer.cancel()
-#             print "Connection process timed-out, try again later; re-establishing full connection with server\n"
-#             client_state_master = State.ESTABLISHED
-#             # TODO - Reset state - need to save state
-#             break
-#
-#         if client_state_temp == State.RCV:
-#             rtp_header, payload = recv()
-#             client_timer.cancel()
-#
-#             # Check checksum; if bad, drop packet, don't send nack, and go back to Master State
-#             if not check_checksum(rtp_header.get_checksum(), rtp_header, payload):
-#                 client_timer = threading.Timer(TIMEOUT_TIME, disconnect_timeout, args=(num_timeouts,))
-#                 client_timer.start()
-#                 client_state_temp = client_state_master
-#
-#                 if is_debug:
-#                     print "Checksum checker detected error on challenge from server, sending nothing"
-#
-#             # Check for duplicate packet
-#             elif rtp_header.get_ack_num() == client_seq_num:
-#                 print "*" * 50
-#                 client_state_temp = client_state_master
-#
-#             else:
-#                 calc_client_server_recv_seq_ack_nums(rtp_header, payload)
-#
-#                 # Check if correct seq and ack nums were sent
-#                 if not check_packet_seq_ack_nums(rtp_header, payload):
-#                     client_state_temp = client_state_master
-#                     print "Not correct ack"
-#
-#                 # If nack recv, send temp state to master state seen last
-#                 elif rtp_header.get_nack():
-#                     client_state_temp = client_state_master
-#
-#                 # If we receive another FIN from server, then we can go straight to TIME_WAIT and send the ACK
-#
-#                 # If FIN and current state is FIN_WAIT_2, then master and temp states change to TIME_WAIT
-#                 elif not rtp_header.get_ack() and rtp_header.get_fin() and client_state_master == State.FIN_WAIT_2:
-#                     client_state_temp = State.TIME_WAIT
-#                     client_state_master = State.TIME_WAIT
-#
-#                 # If ACK and current state is FIN_WAIT_1, then master and temp states change to FIN_WAIT_2
-#                 elif rtp_header.get_ack() and not rtp_header.get_fin() and client_state_temp == State.FIN_WAIT_1:
-#                     client_state_temp = State.FIN_WAIT_2
-#                     client_state_master = State.FIN_WAIT_2
-#
-#         # Send initial request to disconnect
-#         if client_state_temp == State.ESTABLISHED:
-#             client_state_temp = State.FIN_WAIT_1
-#
-#             if is_debug:
-#                 print "Sending initial FIN to server"
-#             send_fin()
-#
-#         # Moving to either TIME_OUT or CLOSING state
-#         if client_state_temp == State.FIN_WAIT_1:
-#             client_timer = threading.Timer(TIMEOUT_TIME, disconnect_timeout, args=(num_timeouts,))
-#             client_timer.start()
-#             client_state_temp = State.RCV
-#
-#             if is_debug:
-#                 print "Receiving ACK from server to move to FIN_WAIT_2 state"
-#
-#         # Moving to rcv state hoping to move to TIME_WAIT state
-#         if client_state_temp == State.FIN_WAIT_2:
-#             print 'FIN_WAIT_2'
-#             is_disconnected = True
-#             break
-            # client_timer = threading.Timer(TIMEOUT_TIME, disconnect_timeout, args=(num_timeouts,))
-            # client_timer.start()
-            # client_state_temp = State.RCV
-            #
-            # if is_debug:
-            #     print "Receiving FIN from server to move to TIME_WAIT state"
+    #if rtp_header.get_ack_num() != client_seq_num:
+    #    client_seq_num = client_seq_num_temp
+    #    server_ack_num = server_ack_num_temp
+    #    return end_disconnect(num_timeouts + 1)
+    if rtp_header.get_fin():
+        # Change sequence and acknowledge numbers to correct ones before sending to server
+        calc_client_server_send_seq_ack_nums(EMPTY_PAYLOAD)
 
-        # # Send ACK to complete disconnect state; go to receive state in case something comes in from server; otherwise
-        # # after time allotment; go to CLOSED state
-        # if client_state_temp == State.TIME_WAIT:
-        #     client_timer = threading.Timer(TIMEOUT_TIME, disconnect_timeout, args=(num_timeouts,))
-        #     client_timer.start()
-        #     client_state_temp = State.RCV
-        #
-        #     if is_debug:
-        #         print "Sending ACK to server to move to TIME_WAIT state"
-        #     send_ack()
+        client_state_master = State.TIME_WAIT
 
-        # # Timeout is complete; connection is closed
-        # if client_state_temp == State.CLOSED:
-        #     if is_debug:
-        #         print "Connection is closed with server."
-        #     is_disconnected = True
-        #     break
-        #
-        # print client_state_master
-
-        # Todo - maybe need to reset state back to seq and ack numbers at established state
-
-        # # Waiting for ACK from server
-        # if client_state_temp == State.CLOSING:
-        #     client_timer = threading.Timer(TIMEOUT_TIME, disconnect_timeout, args=(num_timeouts,))
-        #     client_timer.start()
-        #     client_state_temp = State.RCV
-        #
-        #     if is_debug:
-        #         print "Waiting for ACK from server to move to TIME_OUT state"
-
-                        # # If FIN + ACK, then master and temp states change to TIME_WAIT
-                # elif rtp_header.get_ack() and rtp_header.get_fin():
-                #     client_state_temp = State.TIME_WAIT
-                #     client_state_master = State.TIME_WAIT
-
-                # # If ACK and current state is CLOSING, then master and temp states change to TIME_WAIT
-                # elif rtp_header.get_ack() and not rtp_header.get_fin() and client_state_master == State.CLOSING:
-                #     client_state_temp = State.TIME_WAIT
-                #     client_state_master = State.TIME_WAIT
-
-                # # If FIN and current state is FIN_WAIT_1, then master and temp states change to CLOSING
-                # elif not rtp_header.get_ack() and rtp_header.get_fin() and client_state_master == State.FIN_WAIT_1:
-                #     client_state_temp = State.CLOSING
-                #     client_state_master = State.CLOSING
-
-
-# def disconnect_timeout(num_timeouts):
-#
-#     global client_state_master
-#
-#     if client_state_master == State.ESTABLISHED:
-#         client_state_temp = State.ESTABLISHED
-#         num_timeouts += 1
-#         disconnect(client_state_temp, num_timeouts)
-#
-#     elif client_state_master == State.FIN_WAIT_2:
-#         client_state_temp = State.ESTABLISHED
-#         client_state_master = State.ESTABLISHED
-#         num_timeouts += 1
-#         disconnect(client_state_temp, num_timeouts)
-#
-#     elif client_state_master == State.TIME_WAIT:
-#         client_state_master = State.CLOSED
-#         client_state_temp = State.CLOSED
-#         disconnect(client_state_temp, num_timeouts)
+        # Send out the SYN+ACK+HASH packet to complete final handshake part
+        send_ack(client_seq_num, server_ack_num)
+        return end_disconnect(num_timeouts + 1)
+    else:
+        return True
 
 
 def check_packet_seq_ack_nums(rtp_header, payload):
@@ -814,25 +698,25 @@ def wait_for_acks(time_of_calling, next_packet_to_send):
     return -1
 
 
-def send(ack, syn, fin, nack, payload, ack_num=server_ack_num):
+def send(ack, syn, fin, nack, payload, seq_num, ack_num):
 
     # Calculate checksum on rtp_header and payload with a blank checksum
     checksum = 0
-    rtp_header_obj = RTPHeader(client_seq_num, ack_num, checksum, client_window_size, ack, syn, fin, nack,
+    rtp_header_obj = RTPHeader(seq_num, ack_num, checksum, client_window_size, ack, syn, fin, nack,
                                CLIENT_IP_ADDRESS_LONG, client_port)
     packed_rtp_header = pack_rtpheader(rtp_header_obj)
     packet = packed_rtp_header + payload
     checksum = sum(bytearray(packet))
 
     # Install checksum into rtp_header and package up with payload
-    rtp_header_obj = RTPHeader(client_seq_num, ack_num, checksum, client_window_size, ack, syn, fin, nack,
+    rtp_header_obj = RTPHeader(seq_num, ack_num, checksum, client_window_size, ack, syn, fin, nack,
                                CLIENT_IP_ADDRESS_LONG, client_port)
     packed_rtp_header = pack_rtpheader(rtp_header_obj)
     packet = packed_rtp_header + payload
 
     if is_debug:
         print "Sending:"
-        print '\tClient Seq Num:\t' + str(client_seq_num)
+        print '\tClient Seq Num:\t' + str(seq_num)
         print '\tServer ACK Num:\t' + str(ack_num)
         print '\tChecksum:\t' + str(checksum)
         print '\tClient Window:\t' + str(client_window_size)
@@ -846,21 +730,6 @@ def send(ack, syn, fin, nack, payload, ack_num=server_ack_num):
         print '\tSze-Pyld:\t' + str(len(payload))
 
     sock.sendto(packet, net_emu_addr)
-
-
-# def recv():
-#
-#     recv_packet = sock.recvfrom(BUFFER_SIZE)
-#     packet = recv_packet[0]
-#     rtp_header = packet[0:21]
-#     payload = packet[21:]
-#     rtp_header = unpack_rtpheader(rtp_header, payload)
-#
-#     if is_debug:
-#         print 'Received Payload (may be corrupted):'
-#         print str(payload)
-#
-#     return rtp_header, payload
 
 
 def pack_rtpheader(rtp_header):
@@ -952,29 +821,29 @@ def create_hash(hash_challenge):
     return hash_of_hash
 
 
-def send_syn():
+def send_syn(seq_num, ack_num):
 
-    send(0, 1, 0, 0, EMPTY_PAYLOAD)
+    send(0, 1, 0, 0, EMPTY_PAYLOAD, seq_num, ack_num)
 
 
-def send_synack(payload):
+def send_synack(payload, seq_num, ack_num):
 
     if payload != EMPTY_PAYLOAD:
         payload = create_hash(payload)
 
-    send(1, 1, 0, 0, payload)
+    send(1, 1, 0, 0, payload, seq_num, ack_num)
 
 
-def send_ack():
-    send(1, 0, 0, 0, EMPTY_PAYLOAD)
+def send_ack(seq_num, ack_num):
+    send(1, 0, 0, 0, EMPTY_PAYLOAD, seq_num, ack_num)
 
 
-def send_nack():
-    send(0, 0, 0, 1, EMPTY_PAYLOAD)
+def send_nack(seq_num, ack_num):
+    send(0, 0, 0, 1, EMPTY_PAYLOAD, seq_num, ack_num)
 
 
-def send_fin():
-    send(0, 0, 1, 0, EMPTY_PAYLOAD)
+def send_fin(seq_num, ack_num):
+    send(0, 0, 1, 0, EMPTY_PAYLOAD, seq_num, ack_num)
 
 
 class State:
@@ -1060,19 +929,17 @@ if __name__ == "__main__":
     BUFFER_SIZE = 1045  # 21 bytes for rtp_header and 1024 bytes for payload
     is_debug = False
     EMPTY_PAYLOAD = ''
+    QUEUE_MAX_SIZE = 10
 
     # Client
     client_window_size = 1
     client_port = ''
     CLIENT_IP_ADDRESS = socket.gethostbyname(socket.gethostname())
     CLIENT_IP_ADDRESS_LONG = struct.unpack("!L", socket.inet_aton(CLIENT_IP_ADDRESS))[0]
-    # print CLIENT_IP_ADDRESS_LONG
-    # print CLIENT_IP_ADDRESS
     client_seq_num = 0  # random.randint(0, 2**32-1)  # Todo - fix when done testing, Should we also consider wrap around?
     client_ack_num = client_seq_num
     client_timer = ''
-    # CLIENT_EMPTY_PAYLOAD = ''
-    TIMEOUT_MAX_LIMIT = 25
+    TIMEOUT_MAX_LIMIT = 5
     TIMEOUT_TIME = 1
     client_state_master = State.SYN_SENT
     packet_list = []
@@ -1095,7 +962,7 @@ if __name__ == "__main__":
     server_ack_num = 0
     server_window_size = 1
     server_hash_challenge = ''
-    process_queue = Queue.Queue(maxsize=15000)
+    process_queue = Queue.Queue(maxsize=QUEUE_MAX_SIZE)
     total_packets_rec = 0
     data = []
 
