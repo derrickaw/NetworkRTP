@@ -330,12 +330,12 @@ def complete_challenge(challenge_packet, num_timeouts):
 
     # Increment and save counters
     client_seq_num_temp = client_seq_num
-    server_ack_num_temp = server_ack_num
+    # server_ack_num_temp = server_ack_num
     calc_client_server_recv_seq_ack_nums(rtp_header, payload)
 
     if rtp_header.get_ack_num() != client_seq_num:
         client_seq_num = client_seq_num_temp
-        server_ack_num = server_ack_num_temp
+        # server_ack_num = server_ack_num_temp
         return complete_challenge(challenge_packet, num_timeouts + 1)
     else:
         client_state_master = State.ESTABLISHED
@@ -957,7 +957,7 @@ if __name__ == "__main__":
     client_ack_num = client_seq_num
     client_timer = ''
     TIMEOUT_MAX_LIMIT = 25
-    TIMEOUT_TIME = 1
+    TIMEOUT_TIME = 3
     client_state_master = State.SYN_SENT
     packet_list = []
     is_connected = False
@@ -976,7 +976,7 @@ if __name__ == "__main__":
     server_IP_Address = ''
     server_port = ''
     server_seq_num = 0
-    server_ack_num = 0
+    server_ack_num = 100
     server_window_size = 1
     server_hash_challenge = ''
     process_queue = Queue.Queue(maxsize=QUEUE_MAX_SIZE)
