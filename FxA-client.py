@@ -531,6 +531,14 @@ def get(filename):
         if num_timeouts == TIMEOUT_MAX_LIMIT:
             print 'Server Unresponsive, GET failed'
             break
+    byte_data = []
+    for packet in data:
+        for i in range(0, len(packet.get_payload) - 1):
+            byte_data.append(packet.get_payload[i])
+    file_byte_array = bytearray(byte_data)
+    file_handle = open(filename, 'wb')
+    file_handle.write(file_byte_array)
+    file_handle.close()
 
 
 def wait_for_data_and_acknowledge(time_of_calling, next_packet_to_rec):
@@ -585,12 +593,11 @@ def send_and_wait_for_ack(payload, num_timeouts):
             # If we have timed out less than TIMEOUT_MAX_LIMIT times, then try again with num_timeouts incremented
             print('.'),
             return send_and_wait_for_ack(payload, num_timeouts + 1)
-    if packet.get_header().get_ip() == net_emu_ip_address_long and \
-        packet.get_header().get_port() == net_emu_port and \
-            packet.get_header().get_ack_num() == client_seq_num + len(payload) + 1 and \
+    if packet.get_header().get_ack_num() == client_seq_num + len(payload) + 1 and \
             packet.get_header().get_ack() and not packet.get_header().get_nack:
         return packet.get_payload(), packet.get_header.get_seq_num() + len(payload)
     else:
+        process_queue.put(packet)
         print('.'),
         return send_and_wait_for_ack(payload, 0)
 
