@@ -1,4 +1,5 @@
 import Queue
+import datetime
 import hashlib
 import random
 import re
@@ -255,22 +256,24 @@ def client_thread(client_loc):
 
         # print rtp_header.get_seq_num()
         # Check for payload commands for GET or POST
-        payload_split = check_for_GET_or_POST(payload)
+        payload_split = check_for_get_or_post_request(payload)
 
         # Client calls a GET or POST command
         if payload_split is not None:
 
             # GET Command
-            if 'GET' == payload_split[0]:
-                print 'GET'  # TODO - DELETE ME
-                get_t = threading.Thread(target=get, args=(client_loc,))
+            if payload_split[0] == 'GET':
+                if is_debug:
+                    print 'GET'
+                get_t = threading.Thread(target=get, args=(payload_split[1], clientList[client_loc], packet,))
                 get_t.daemon = True
                 get_t.start()
                 get_t.join()
 
             # POST Command
             elif 'POST' == payload_split[0]:
-                print 'POST'  # TODO -  DELETE ME
+                if is_debug:
+                    print 'POST'
                 post_t = threading.Thread(target=post, args=(client_loc,))
                 post_t.daemon = True
                 post_t.start()
@@ -319,10 +322,10 @@ def check_packet_match_ack_nums(client_loc, rtp_header):
     return False
 
 
-def check_for_GET_or_POST(payload):
+def check_for_get_or_post_request(payload):
     if len(payload) > 0:
         payload_split = payload.split('|')
-        if payload_split == 3 and (payload_split[0] == 'GET' or payload_split[0] == 'POST'):
+        if payload_split[0] == 'GET' or payload_split[0] == 'POST':
             return payload_split
     return None
 
@@ -474,9 +477,6 @@ def unpack_bits(bit_string):
 
 
 def get(filename, conn_object, request_packet):
-    global total_packets_sent
-    global packet_list
-
     try:
         file_handle = open(filename, 'rb')
     except IOError:
@@ -484,7 +484,7 @@ def get(filename, conn_object, request_packet):
         send(conn_object.server_seq_num, request_packet.get_header().get_seq_num() + len(request_packet.get_payload()),
              1, 0, 0, 0, 'GET|FILENOTFOUND|0')
         return
-    del packet_list[:]  # clear out the list of packets
+    packet_list = []  # clear out the list of packets
     while True:
         data = file_handle.read(1024)
         if not data:
@@ -493,7 +493,7 @@ def get(filename, conn_object, request_packet):
                                   False))
     file_handle.close()
     send(conn_object.server_seq_num, request_packet.get_header().get_seq_num() + len(request_packet.get_payload()),
-             1, 0, 0, 0, 'GET|{0}|{1}'.format(filename, str(len(packet_list))))
+         1, 0, 0, 0, 'GET|{0}|{1}'.format(filename, str(len(packet_list))))
     next_packet_to_send = 0
     num_timeouts = 0
     total_packets_sent = 0
@@ -515,7 +515,7 @@ def get(filename, conn_object, request_packet):
             if not packet_list[x].get_acknowledged():  # if it has not been acknowledged
                 send(conn_object.server_seq_num, 0, 0, 0, 0, 0, packet_list[x].payload)
                 packets_sent_in_curr_window += 1
-                if packets_sent_in_curr_window == server_window_size:
+                if packets_sent_in_curr_window == conn_object.window_size:
                     break
 
         # Use temp variable to see if we actually received any
@@ -523,7 +523,8 @@ def get(filename, conn_object, request_packet):
 
         # wait_for_acks processes all the packets received in the 5 seconds after sending the window,
         # and sets the next packet to send
-        next_packet_to_send = wait_for_acks(datetime.datetime.now(), next_packet_to_send)
+        next_packet_to_send, total_packets_sent = wait_for_acks(datetime.datetime.now(), next_packet_to_send,
+                                                                total_packets_sent, packet_list, conn_object)
 
         # if we have acknowledged all of the packets, then we are done
         if next_packet_to_send == -1:
@@ -537,6 +538,39 @@ def get(filename, conn_object, request_packet):
         if num_timeouts == TIMEOUT_MAX_LIMIT:
             print 'Server Unresponsive, POST failed'
             break
+
+
+def wait_for_acks(time_of_calling, next_packet_to_send, packets_sent, list_of_packets, conn_object):
+    to_return_packets_sent = packets_sent
+
+    # Look at all the windows and sequence numbers received
+    client_windows_received = []
+    client_seq_num_received = []
+
+    while True:
+        # Stay in the loop for 5 seconds
+        if datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
+            break
+
+        # Try to pull something out of the Queue, block for a second, if there is nothing there, then go to the top
+        try:
+            new_packet = conn_object.mailbox.get(True, 1)
+        except Queue.Empty:
+            continue
+
+        # Look through the packet list to find the packet that the ACK is referencing
+        for i in list_of_packets:
+            if i.get_header().seq_num() + len(i.get_payload()) == new_packet.get_header().get_ack_num():
+                i.acknowledged = True
+                to_return_packets_sent += 1
+                client_windows_received.append(new_packet.get_header().get_window())
+                client_seq_num_received.append(new_packet.get_header().get_seq_num())
+    conn_object.client_seq_num = max(client_seq_num_received)
+    conn_object.window_size = min(client_windows_received)
+    for i in range(next_packet_to_send, len(list_of_packets) - 1):
+        if not list_of_packets[i].get_acknowledged():
+            return i, to_return_packets_sent
+    return -1, to_return_packets_sent
 
 
 def check_client_list(client_ip_address, client_port):
