@@ -289,12 +289,12 @@ def obtain_challenge_packet(num_timeouts):
 
     # Increment and save counters
     client_seq_num_temp = client_seq_num
-    server_ack_num_temp = server_ack_num
+    # server_ack_num_temp = server_ack_num
     calc_client_server_recv_seq_ack_nums(rtp_header, payload)
 
-    if rtp_header.get_ack_num() != client_seq_num:
+    if rtp_header.get_ack_num() != client_ack_num:
         client_seq_num = client_seq_num_temp
-        server_ack_num = server_ack_num_temp
+        # server_ack_num = server_ack_num_temp
         return obtain_challenge_packet(num_timeouts + 1)
 
     else:
@@ -437,38 +437,47 @@ def end_disconnect(num_timeouts):
 
 def check_packet_seq_ack_nums(rtp_header, payload):
 
-    # First compare calculated server_seq_nums to recv server_seq_num
-    server_seq_num_correct = False
-    if server_seq_num == rtp_header.get_seq_num():
-        server_seq_num_correct = True
-
-    # Second check client ack number matches seq number
-    client_ack_num_correct = False
+    # Check client ack number matches seq number + payload
     if client_ack_num == rtp_header.get_ack_num():
-        client_ack_num_correct = True
+        return True
+    return False
 
-    return server_seq_num_correct and client_ack_num_correct
+
+#
+# def check_packet_seq_ack_nums(rtp_header, payload):
+#
+#     # First compare calculated server_seq_nums to recv server_seq_num
+#     server_seq_num_correct = False
+#     if server_seq_num == rtp_header.get_seq_num():
+#         server_seq_num_correct = True
+#
+#     # Second check client ack number matches seq number
+#     client_ack_num_correct = False
+#     if client_ack_num == rtp_header.get_ack_num():
+#         client_ack_num_correct = True
+#
+#     return server_seq_num_correct and client_ack_num_correct
 
 
 def calc_client_server_send_seq_ack_nums(payload):
     global client_ack_num
-    global server_seq_num
+    # global server_seq_num
 
     if len(payload) == 0:
         client_ack_num = client_seq_num + 1
     else:
         client_ack_num = client_seq_num + len(payload)
 
-    server_seq_num = server_ack_num
+    # server_seq_num = server_ack_num
 
 
 def calc_client_server_recv_seq_ack_nums(rtp_header, payload):
     global client_seq_num
     global server_ack_num
-    global server_seq_num
+    # global server_seq_num
 
-    if server_seq_num == 0:
-        server_seq_num = rtp_header.get_seq_num()
+    # if server_seq_num == 0:
+    #    server_seq_num = rtp_header.get_seq_num()
 
     client_seq_num = client_ack_num
 
@@ -478,23 +487,23 @@ def calc_client_server_recv_seq_ack_nums(rtp_header, payload):
         server_ack_num = server_seq_num + len(payload)
 
 
-def calc_server_ack_num(rtp_header, payload):
-    global server_seq_num
-    global server_ack_num
-
-    print server_seq_num
-    print server_ack_num
-    # Compute what the server seq and ack numbers should be based on the payload
-    if server_seq_num == 0:
-        server_seq_num = rtp_header.get_seq_num()
-    else:
-        server_seq_num = server_ack_num
-    if len(payload) == 0:
-        server_ack_num = server_seq_num + 1
-    else:
-        server_ack_num = server_seq_num + len(payload)
-    print server_seq_num
-    print server_ack_num
+# def calc_server_ack_num(rtp_header, payload):
+#     global server_seq_num
+#     global server_ack_num
+#
+#     print server_seq_num
+#     print server_ack_num
+#     # Compute what the server seq and ack numbers should be based on the payload
+#     if server_seq_num == 0:
+#         server_seq_num = rtp_header.get_seq_num()
+#     else:
+#         server_seq_num = server_ack_num
+#     if len(payload) == 0:
+#         server_ack_num = server_seq_num + 1
+#     else:
+#         server_ack_num = server_seq_num + len(payload)
+#     print server_seq_num
+#     print server_ack_num
 
 
 def get(filename):
@@ -751,9 +760,10 @@ def pack_rtpheader(rtp_header):
 def unpack_rtpheader(packed_rtp_header):
     #global server_window_size
     #global server_port
+    global server_seq_num
 
     unpacked_rtp_header = struct.unpack('!LLHLBLH', packed_rtp_header)  # 21 bytes
-    server_seq_num_local = unpacked_rtp_header[0]
+    server_seq_num = unpacked_rtp_header[0]
     client_ack_num_test = unpacked_rtp_header[1]
     checksum = unpacked_rtp_header[2]
     server_window_size_temp = unpacked_rtp_header[3]
@@ -761,12 +771,12 @@ def unpack_rtpheader(packed_rtp_header):
     ack, syn, fin, nack = unpack_bits(flags)
     server_ip_address_long = unpacked_rtp_header[5]
     server_port_temp = unpacked_rtp_header[6]
-    rtp_header_obj = RTPHeader(server_seq_num_local, client_ack_num_test, checksum, server_window_size_temp, ack, syn,
+    rtp_header_obj = RTPHeader(server_seq_num, client_ack_num_test, checksum, server_window_size_temp, ack, syn,
                                fin, nack, server_ip_address_long, server_port_temp)
 
     if is_debug:
         print "Unpacking Header:"
-        print '\tServer Seq Num:\t' + str(server_seq_num_local)
+        print '\tServer Seq Num:\t' + str(server_seq_num)
         print '\tClient ACK Num:\t' + str(client_ack_num_test)
         print '\tChecksum:\t' + str(checksum)
         print '\tServer Window:\t' + str(server_window_size)
@@ -946,7 +956,7 @@ if __name__ == "__main__":
     client_seq_num = 0  # random.randint(0, 2**32-1)  # Todo - fix when done testing, Should we also consider wrap around?
     client_ack_num = client_seq_num
     client_timer = ''
-    TIMEOUT_MAX_LIMIT = 5
+    TIMEOUT_MAX_LIMIT = 25
     TIMEOUT_TIME = 1
     client_state_master = State.SYN_SENT
     packet_list = []
