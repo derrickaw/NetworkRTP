@@ -13,25 +13,25 @@ To run the FxA application use the following commands
 
 #### Startup
 
-python FxA-server.py X A P  
+`python FxA-server.py X A P`
   
-The command-line arguments are:  
-  *X: the port number at which the FxA-server’s UDP socket should bind to (odd number)  
-  *A: the IP address of NetEmu  
-  *P: the UDP port number of NetEmu  
+The command-line arguments are:
+* X: the port number at which the FxA-serverï¿½s UDP socket should bind to (odd number)
+* A: the IP address of NetEmu
+* P: the UDP port number of NetEmu
 #### Commands
-Command: "window W"  
-  *Set the maximum receiver's window-size at the FxA-Server  
-  *W: The window-size (in segments).
+*Command: `window W`*
+* Set the maximum receiver's window-size at the FxA-Server
+* W: The window-size (in segments).
   
-Command: "terminate"  
-  *Shut-down FxA-Server gracefully.
+*Command: `terminate`*
+* Shut-down FxA-Server gracefully.
 
 ### Client
 
 #### Startup
 
-python FxA-client.py X A P
+`python FxA-client.py X A P`
 
 The command-line arguments are:
 
@@ -54,7 +54,7 @@ Command: "post F"
 	REQUIRES EXISTING CONNECTION
 
 Command: "window W"
-	Set the maximum receiver’s window-size at the FxA-client
+	Set the maximum receiverï¿½s window-size at the FxA-client
 	W: The window-size (in segments).
 
 Command: "disconnect"
