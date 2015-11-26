@@ -23,7 +23,7 @@ The command-line arguments are:
 #### Commands  
 *Command: `window W`*
 * Set the maximum receiver's window-size at the FxA-Server
-* W: The window-size (in segments).
+* **W**: The window-size (in segments).
   
 *Command: `terminate`*
 * Shut-down FxA-Server gracefully.
@@ -55,7 +55,7 @@ The command-line arguments are:
 
 *Command: `window W`*
 * Set the maximum receiver's window-size at the FxA-client
-* W: The window-size (in segments).
+* **W**: The window-size (in segments).
 
 *Command: `disconnect`*
 * The FxA-client terminates gracefully from the FxA-server
