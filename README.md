@@ -16,7 +16,7 @@ To run the FxA application use the following commands
 `python FxA-server.py X A P`
   
 The command-line arguments are:
-* X: the port number at which the FxA-server�s UDP socket should bind to (odd number)
+* X: the port number at which the FxA-server's UDP socket should bind to (odd number)
 * A: the IP address of NetEmu
 * P: the UDP port number of NetEmu
 #### Commands
