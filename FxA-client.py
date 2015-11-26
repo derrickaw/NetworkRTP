@@ -104,12 +104,15 @@ def main(argv):
     print "*"*80
     print
 
-    while command_input != 'disconnect':
+    # Main area for command input
+    while command_input != 'disconnect' or is_disconnected == False:
         command_input = raw_input('Please enter command: ')
         if is_connected:
             fin_listener = threading.Thread(target=listen_for_fin)
             fin_listener.daemon = True
             fin_listener.start()
+
+        # CONNECT
         if command_input == 'connect':
             if not is_connected:
                 # start connect
@@ -122,6 +125,8 @@ def main(argv):
                     "Error creating/starting client connect thread"
             else:
                 print ("Client already connected to server\n")
+
+        # DISCONNECT
         elif command_input == 'disconnect':
             if is_connected:
                 with fin_listen_termination_lock:
@@ -138,6 +143,8 @@ def main(argv):
             else:
                 command_input = "None" # Reset to keep the while loop going
                 print "There must be a connection with the server to disconnect.  Try connecting first."
+
+        # GET, POST, WINDOW
         else:
             command_input_split = command_input.split(" ")
             if command_input_split[0] == 'get':
@@ -264,13 +271,15 @@ def recv_packet():
 
 
 def connect(num_timeouts):
-
+    global server_ack_num
     global is_connected
 
+    saved_seq_ack_num_state = server_ack_num
     challenge_packet, num_timeouts_updated = obtain_challenge_packet(num_timeouts)
 
     if challenge_packet is None or not complete_challenge(challenge_packet, num_timeouts_updated):
         is_connected = False
+        server_ack_num = saved_seq_ack_num_state
         if is_debug:
             print "Didn't receive final ACK from server, connection not established"
         print "Connection was refused...try again later."
@@ -287,13 +296,11 @@ def obtain_challenge_packet(num_timeouts):
     global client_seq_num
     global server_ack_num
 
-    # Change sequence and acknowledge numbers to correct ones before sending to server
-    #calc_client_server_send_seq_ack_nums(EMPTY_PAYLOAD)
 
-
-    # Send out the SYN packet to start connection
+    # Send out the SYN packet to start connection; use pre-calculated seq_nums for sending and use last known
+    # server_ack_num to send out
     send_syn(client_connect_seq_nums[0], server_ack_num)
-    packet = None
+    # packet = None
     try:
         # Wait until the process queue has a packet, block for TIMEOUT_TIME seconds
         packet = process_queue.get(True, TIMEOUT_TIME)
@@ -309,18 +316,14 @@ def obtain_challenge_packet(num_timeouts):
     rtp_header = packet.get_header()
     payload = packet.get_payload()
 
-    # Increment and save counters
-    #client_seq_num_temp = client_seq_num
-    # server_ack_num_temp = server_ack_num
-    #calc_client_server_recv_seq_ack_nums(rtp_header, payload)
+    # Increment server_ack_num to account for recent recv packet from server
+    server_ack_num = rtp_header.get_seq_num() + calc_payload_length(payload)
 
-    server_ack_num = server_seq_num + len(payload)
-
+    # Check that ack_num sent from server matches pre-populated seq_num; if bad, recurse
     if rtp_header.get_ack_num() != client_connect_seq_nums[1]:
-        #client_seq_num = client_seq_num_temp
-        # server_ack_num = server_ack_num_temp
         return obtain_challenge_packet(num_timeouts + 1)
 
+    # If good; return packet and current num_timeouts to next phase of
     else:
         client_state_master = State.SYN_SENT_HASH
         return packet, num_timeouts
@@ -332,10 +335,8 @@ def complete_challenge(challenge_packet, num_timeouts):
     global client_seq_num
     global server_ack_num
 
-    # Change sequence and acknowledge numbers to correct ones before sending to server
-    # calc_client_server_send_seq_ack_nums(challenge_packet.get_payload())
-
     # Send out the SYN+ACK+HASH packet to complete final handshake part
+    # Use pre-populated seq_nums for client to send out and current server_ack_num
     send_synack(challenge_packet.get_payload(), client_connect_seq_nums[1], server_ack_num)
     try:
         # Wait until the process queue has a packet, block for TIMEOUT_TIME seconds
@@ -352,15 +353,15 @@ def complete_challenge(challenge_packet, num_timeouts):
     rtp_header = packet.get_header()
     payload = packet.get_payload()
 
-    # Increment and save counters
-    #client_seq_num_temp = client_seq_num
-    # server_ack_num_temp = server_ack_num
-    #calc_client_server_recv_seq_ack_nums(rtp_header, payload)
-    server_ack_num = server_seq_num + 1
+    # Increment server_ack_num to account for recent recv packet from server
+    server_ack_num = rtp_header.get_seq_num() + calc_payload_length(payload)
+
+    # Check client ack_num from recent packet received with pre-populated seq_nums
+    # If bad, recurse
     if rtp_header.get_ack_num() != client_connect_seq_nums[2]:
-        # client_seq_num = client_seq_num_temp
-        # server_ack_num = server_ack_num_temp
         return complete_challenge(challenge_packet, num_timeouts + 1)
+
+    # If good, we are done and connected with server
     else:
         client_seq_num = client_connect_seq_nums[2]
         client_state_master = State.ESTABLISHED
@@ -368,31 +369,39 @@ def complete_challenge(challenge_packet, num_timeouts):
 
 
 def disconnect(num_timeouts):
-
     global is_disconnected
+    global is_connected
     global client_disconnect_seq_nums
 
+    # Input current client_seq_num to pre-populate our known seq_nums that we will be dealing with
     client_disconnect_seq_nums = create_client_disconnect_seq_nums(client_seq_num)
 
-    first_part_complete, num_timeouts_updated = begin_disconnect(num_timeouts)
-
-    if first_part_complete and end_disconnect(num_timeouts_updated):
-        print "disconnect true"
-        print "*"*500
+    if disconnect_operation(num_timeouts):
+        is_connected = False
         is_disconnected = True
+        print "Disconnected from server...goodbye."
+    else:
+        is_disconnected = False
+        print "Disconnect failed...try again later."
 
 
-def begin_disconnect(num_timeouts):
+    # first_part_complete, num_timeouts_updated = begin_disconnect(num_timeouts)
+    #
+    # if first_part_complete and end_disconnect(num_timeouts_updated):
+    #     print "disconnect true"
+    #     print "*"*500
+    #     is_disconnected = True
+
+
+def disconnect_operation(num_timeouts):
 
     global client_state_master
     global client_seq_num
+    global client_ack_num
     global server_ack_num
-    print "begin_disconnect"
-    print "$"*100
-    # Change sequence and acknowledge numbers to correct ones before sending to server
-    #calc_client_server_send_seq_ack_nums(EMPTY_PAYLOAD)
 
-    # Send out the FIN packet
+    # Send out the FIN packet to initialize disconnect
+    # Send pre-populated disconnect client seq_nums and current server_ack_num
     send_fin(client_disconnect_seq_nums[0], server_ack_num)
     try:
         # Wait until the process queue has a packet, block for TIMEOUT_TIME seconds
@@ -400,69 +409,68 @@ def begin_disconnect(num_timeouts):
     except Queue.Empty:  # If after blocking there still was not a packet in the queue
         # If we have timed out TIMEOUT_MAX_LIMIT times, then cancel the operation
         if num_timeouts == TIMEOUT_MAX_LIMIT:
-            return False, None
-        else:
-            # If we have timed out less than TIMEOUT_MAX_LIMIT times, then try again with num_timeouts incremented
-            print('.'),
-            return begin_disconnect(num_timeouts + 1)
-
-    rtp_header = packet.get_header()
-    payload = packet.get_payload()
-
-
-    server_ack_num = server_seq_num + 1
-    if rtp_header.get_ack_num() != client_disconnect_seq_nums[1]:
-        # client_seq_num = client_seq_num_temp
-        # server_ack_num = server_ack_num_temp
-        return begin_disconnect(num_timeouts + 1)
-    else:
-        client_state_master = State.FIN_WAIT_2
-        return True, num_timeouts
-
-def end_disconnect(num_timeouts):
-
-    global client_state_master
-    global client_seq_num
-    global server_ack_num
-    print "end_disconnect"
-    print "*"*100
-    try:
-        # Wait until the process queue has a packet, block for TIMEOUT_TIME seconds
-        packet = process_queue.get(True, TIMEOUT_TIME)
-    except Queue.Empty:  # If after blocking there still was not a packet in the queue
-        # If we have timed out TIMEOUT_MAX_LIMIT times, then cancel the operation
-        if num_timeouts == TIMEOUT_MAX_LIMIT:
             return False
+        elif client_state_master == State.TIME_WAIT:
+            return True
         else:
             # If we have timed out less than TIMEOUT_MAX_LIMIT times, then try again with num_timeouts incremented
             print('.'),
-            return end_disconnect(num_timeouts + 1)
+            return disconnect_operation(num_timeouts + 1)
 
     rtp_header = packet.get_header()
     payload = packet.get_payload()
 
-    # Increment and save counters
-    # client_seq_num_temp = client_seq_num
-    # server_ack_num_temp = server_ack_num
+    # Increment server_ack_num to account for recent recv packet from server
+    server_ack_num = rtp_header.get_seq_num() + calc_payload_length(payload)
 
-    # calc_client_server_recv_seq_ack_nums(rtp_header, payload)
-
+    # Check client ack_num from recent packet received with pre-populated seq_nums
+    # If bad, recurse
     if rtp_header.get_ack_num() != client_disconnect_seq_nums[1]:
-        # client_seq_num = client_seq_num_temp
-        # server_ack_num = server_ack_num_temp
-        return end_disconnect(num_timeouts + 1)
-    if rtp_header.get_fin():
-        # Change sequence and acknowledge numbers to correct ones before sending to server
-        # calc_client_server_send_seq_ack_nums(EMPTY_PAYLOAD)
-        server_ack_num = server_seq_num + 1
-        client_state_master = State.TIME_WAIT
+        return disconnect_operation(num_timeouts + 1)
 
-        # Send out the SYN+ACK+HASH packet to complete final handshake part
-        send_ack(client_seq_num, server_ack_num)
-        return True
-    else:
-        return end_disconnect(num_timeouts + 1)
+    # If good, move onto receiving FIN from server and then sending ACK to complete disconnect
+    elif rtp_header.get_ack():
+        client_state_master = State.FIN_WAIT_2
 
+        try:
+            # Wait until the process queue has a packet, block for TIMEOUT_TIME seconds
+            packet = process_queue.get(True, TIMEOUT_TIME)
+        except Queue.Empty:  # If after blocking there still was not a packet in the queue
+            # If we have timed out TIMEOUT_MAX_LIMIT times, then cancel the operation
+            if num_timeouts == TIMEOUT_MAX_LIMIT:
+                return False
+            else:
+                # If we have timed out less than TIMEOUT_MAX_LIMIT times, then try again with num_timeouts incremented
+                print('.'),
+                return disconnect_operation(num_timeouts + 1)
+
+        rtp_header = packet.get_header()
+        payload = packet.get_payload()
+
+        # Increment server_ack_num to account for recent recv packet from server
+        server_ack_num = rtp_header.get_seq_num() + calc_payload_length(payload)
+
+        # Check client ack_num from recent packet received with pre-populated seq_nums
+        # If bad, recurse
+        if rtp_header.get_ack_num() != client_disconnect_seq_nums[1]:
+            return disconnect_operation(num_timeouts + 1)
+
+        # We received a FIN; send ACK to complete disconnect
+        # If server indeed receives an ACK, disconnect in complete, but if the server sends another FIN, then we need
+        # to resend an ACK and wait again
+        elif rtp_header.get_fin() or client_state_master == State.TIME_WAIT:
+            # Change sequence and acknowledge numbers to correct ones before sending to server
+            server_ack_num = server_seq_num + calc_payload_length(payload)
+            client_state_master = State.TIME_WAIT
+            send_ack(client_disconnect_seq_nums[1], server_ack_num)
+            client_ack_num = client_disconnect_seq_nums[2] + 1
+            client_seq_num = client_ack_num
+            return disconnect_operation(num_timeouts + 1)
+            # return True
+
+        # We received something else; lets recurse again
+        else:
+            return disconnect_operation(num_timeouts + 1)
 
 
 def check_packet_seq_ack_nums(rtp_header, payload):
@@ -471,46 +479,6 @@ def check_packet_seq_ack_nums(rtp_header, payload):
     if client_ack_num == rtp_header.get_ack_num():
         return True
     return False
-
-
-#
-# def check_packet_seq_ack_nums(rtp_header, payload):
-#
-#     # First compare calculated server_seq_nums to recv server_seq_num
-#     server_seq_num_correct = False
-#     if server_seq_num == rtp_header.get_seq_num():
-#         server_seq_num_correct = True
-#
-#     # Second check client ack number matches seq number
-#     client_ack_num_correct = False
-#     if client_ack_num == rtp_header.get_ack_num():
-#         client_ack_num_correct = True
-#
-#     return server_seq_num_correct and client_ack_num_correct
-
-
-def calc_client_server_send_seq_ack_nums(payload):
-    global client_ack_num
-    # global server_seq_num
-
-    if len(payload) == 0:
-        client_ack_num = client_seq_num + 1
-    else:
-        client_ack_num = client_seq_num + len(payload)
-
-    # server_seq_num = server_ack_num
-
-
-def calc_client_server_recv_seq_ack_nums(rtp_header, payload):
-    global client_seq_num
-    global server_ack_num
-
-    client_seq_num = client_ack_num
-
-    if len(payload) == 0:
-        server_ack_num = server_seq_num + 1
-    else:
-        server_ack_num = server_seq_num + len(payload)
 
 
 def get(filename):
@@ -783,7 +751,6 @@ def pack_rtpheader(rtp_header):
 
 
 def unpack_rtpheader(packed_rtp_header):
-    #global server_port
     global server_seq_num
 
     unpacked_rtp_header = struct.unpack('!LLHLBLH', packed_rtp_header)  # 21 bytes
@@ -837,15 +804,13 @@ def unpack_bits(bit_string):
 def check_checksum(checksum, rtp_header, payload):
 
     flags = pack_bits(rtp_header.get_ack(), rtp_header.get_syn(), rtp_header.get_fin(), rtp_header.get_nack())
-    packed_checksum = struct.pack('!L', checksum)
     packed_rtp_header = struct.pack('!LLHLBLH', rtp_header.get_seq_num(), rtp_header.get_ack_num(),
                                     0, rtp_header.get_window(), flags, rtp_header.get_ip(),
                                     rtp_header.get_port())
 
-    data = packed_rtp_header + payload
+    total_data = packed_rtp_header + payload
 
-    new_checksum = sum(bytearray(data)) % 65535
-    # new_checksum -= sum(bytearray(packed_checksum))
+    new_checksum = sum(bytearray(total_data)) % 65535
 
     if checksum == new_checksum:
         if is_debug:
@@ -885,6 +850,14 @@ def send_nack(seq_num, ack_num):
 
 def send_fin(seq_num, ack_num):
     send(0, 0, 1, 0, EMPTY_PAYLOAD, seq_num, ack_num)
+
+
+def calc_payload_length(payload):
+
+    if len(payload) == 0:
+        return 1
+    else:
+        return len(payload)
 
 
 def create_client_connect_seq_nums(syn_sent_seq_num):
@@ -991,8 +964,8 @@ if __name__ == "__main__":
     client_seq_num = 0  # random.randint(0, 2**32-1)  # Todo - fix when done testing, Should we also consider wrap around?
     client_ack_num = client_seq_num
     client_timer = ''
-    TIMEOUT_MAX_LIMIT = 10
-    TIMEOUT_TIME = 3
+    TIMEOUT_MAX_LIMIT = 25
+    TIMEOUT_TIME = 1
     client_connect_seq_nums = create_client_connect_seq_nums(client_seq_num)
     client_disconnect_seq_nums = None
     client_state_master = State.SYN_SENT
