@@ -550,30 +550,36 @@ def get(filename, conn_object, request_packet, payload):
     total_packets_sent = 0
     # repeat infinitely if need be, will be broken out of if TIMEOUT_MAX_LIMIT timeouts are reached
     while True:
-        print '{0:.1f}%%'.format(total_packets_sent / len(packet_list))
+        print '{0:.1f}%'.format((total_packets_sent / float(len(packet_list))) * 100)
         if is_debug:
             print('\t\t'),
             for i in range(0, len(packet_list)):
                 print(i),
             print ''
             print 'ACK''ed:\t',
-            for j in range(0, min(9, len(packet_list))):
+            for j in range(0, min(10, len(packet_list))):
                 if packet_list[j].get_acknowledged():
                     print('x'),
                 else:
                     print('.'),
             if len(packet_list) > 10:
-                for k in range(10, max(9, len(packet_list))):
+                for k in range(10, min(100, len(packet_list))):
                     if packet_list[k].get_acknowledged():
-                        print('x'),
+                        print(' x'),
                     else:
                         print(' .'),
+            if len(packet_list) > 100:
+                for k in range(100, len(packet_list)):
+                    if packet_list[k].get_acknowledged():
+                        print('  x'),
+                    else:
+                        print('  .'),
             print ''
         # send (server window size) # of un-acknowledged packets in the packet list
         packets_sent_in_curr_window = 0
         for x in range(next_packet_to_send, len(packet_list)):
             if not packet_list[x].get_acknowledged():  # if it has not been acknowledged
-                send(conn_object.server_seq_num, 0, 0, 0, 0, 0, packet_list[x].payload)
+                send(packet_list[x].header.seq_num, 0, 0, 0, 0, 0, packet_list[x].payload)
                 conn_object.server_seq_num += len(packet_list[x].payload)
                 packets_sent_in_curr_window += 1
                 if packets_sent_in_curr_window == conn_object.window_size:
