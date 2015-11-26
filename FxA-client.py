@@ -503,7 +503,7 @@ def get(filename):
     for i in range(packets_in_file):
         data.append(Packet(RTPHeader(first_seq_num + i * 1024, 0, 0, 0, 0, 0, 0, 0, 0, 0), None, None))
     while True:
-        print '{0:.1f}%'.format(total_packets_rec/packets_in_file)
+        print '{0:.1f}%'.format((total_packets_rec/float(packets_in_file)) * 100)
         curr_num_packets_rec = total_packets_rec
         next_packet_to_rec = wait_for_data_and_acknowledge(datetime.datetime.now(), next_packet_to_rec)
         if next_packet_to_rec == -1:
@@ -535,24 +535,24 @@ def wait_for_data_and_acknowledge(time_of_calling, next_packet_to_rec):
     # Look at all the windows and sequence numbers received
     server_windows_received = []
     server_seq_num_received = []
+
     while True:
         # Stay in the loop for 5 seconds
         if datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
             break
-
         # Try to pull something out of the Queue, block for a second, if there is nothing there, then go to the top
         try:
             new_packet = process_queue.get(True, 1)
         except Queue.Empty:
             continue
-
         # Look through the packet list to find the packet that the ACK is referencing
         for i in data:
-            if i.get_header().get_seq_num() == new_packet.get_header().get_seq_num() and not i.get_acknowledged():
-                total_packets_rec += 1
+            if i.get_header().get_seq_num() == new_packet.get_header().get_seq_num():
+                if i.payload is None:
+                    total_packets_rec += 1
+                    i.payload = new_packet.get_payload()
                 server_windows_received.append(new_packet.get_header().get_window())
                 server_seq_num_received.append(new_packet.get_header().get_seq_num())
-                i.payload = new_packet.get_payload()
                 send(1, 0, 0, 0, '', client_seq_num, i.get_header().get_seq_num() + len(i.get_payload()))
                 break
     if not len(server_seq_num_received) == 0:
@@ -561,7 +561,6 @@ def wait_for_data_and_acknowledge(time_of_calling, next_packet_to_rec):
         server_window_size = min(server_windows_received)
     else:
         server_window_size = 10
-
     for i in range(next_packet_to_rec, len(data)):
         if not data[i].get_payload():
             return i

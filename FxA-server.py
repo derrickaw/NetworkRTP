@@ -585,30 +585,36 @@ def get(filename, conn_object, request_packet, payload):
     total_packets_sent = 0
     # repeat infinitely if need be, will be broken out of if TIMEOUT_MAX_LIMIT timeouts are reached
     while True:
-        print '{0:.1f}%%'.format(total_packets_sent / len(packet_list))
+        print '{0:.1f}%'.format((total_packets_sent / float(len(packet_list))) * 100)
         if is_debug:
             print('\t\t'),
             for i in range(0, len(packet_list)):
                 print(i),
             print ''
             print 'ACK''ed:\t',
-            for j in range(0, min(9, len(packet_list))):
+            for j in range(0, min(10, len(packet_list))):
                 if packet_list[j].get_acknowledged():
                     print('x'),
                 else:
                     print('.'),
             if len(packet_list) > 10:
-                for k in range(10, max(9, len(packet_list))):
+                for k in range(10, min(100, len(packet_list))):
                     if packet_list[k].get_acknowledged():
-                        print('x'),
+                        print(' x'),
                     else:
                         print(' .'),
+            if len(packet_list) > 100:
+                for k in range(100, len(packet_list)):
+                    if packet_list[k].get_acknowledged():
+                        print('  x'),
+                    else:
+                        print('  .'),
             print ''
         # send (server window size) # of un-acknowledged packets in the packet list
         packets_sent_in_curr_window = 0
         for x in range(next_packet_to_send, len(packet_list)):
             if not packet_list[x].get_acknowledged():  # if it has not been acknowledged
-                send(conn_object.server_seq_num, 0, 0, 0, 0, 0, packet_list[x].payload)
+                send(packet_list[x].header.seq_num, 0, 0, 0, 0, 0, packet_list[x].payload)
                 conn_object.server_seq_num += len(packet_list[x].payload)
                 packets_sent_in_curr_window += 1
                 if packets_sent_in_curr_window == conn_object.window_size:
@@ -642,23 +648,21 @@ def wait_for_acks(time_of_calling, next_packet_to_send, packets_sent, list_of_pa
     # Look at all the windows and sequence numbers received
     client_windows_received = []
     client_seq_num_received = [conn_object.client_seq_num]
-    t = 1
     while True:
         # Stay in the loop for 5 seconds
-        if t == 11:  # datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
+        if datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
             break
-
         # Try to pull something out of the Queue, block for a second, if there is nothing there, then go to the top
         try:
             new_packet = conn_object.mailbox.get(True, 1)
         except Queue.Empty:
-            t += 1
             continue
         if not new_packet.header.ack:
             continue
         # Look through the packet list to find the packet that the ACK is referencing
         for i in list_of_packets:
-            if i.get_header().seq_num + len(i.get_payload()) == new_packet.get_header().get_ack_num() and not i.acknowledged:
+            if i.get_header().seq_num + len(i.get_payload()) == new_packet.get_header().get_ack_num()\
+                    and not i.acknowledged:
                 i.acknowledged = True
                 to_return_packets_sent += 1
                 client_windows_received.append(new_packet.get_header().get_window())
