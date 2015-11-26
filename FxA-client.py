@@ -567,20 +567,16 @@ def wait_for_data_and_acknowledge(time_of_calling, next_packet_to_rec):
     # Look at all the windows and sequence numbers received
     server_windows_received = []
     server_seq_num_received = []
-    t = 1
 
     while True:
         # Stay in the loop for 5 seconds
-        if t > 12:  # datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
+        if datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
             break
-
         # Try to pull something out of the Queue, block for a second, if there is nothing there, then go to the top
         try:
             new_packet = process_queue.get(True, 1)
         except Queue.Empty:
-            t += 1
             continue
-        t += 1
         # Look through the packet list to find the packet that the ACK is referencing
         for i in data:
             if i.get_header().get_seq_num() == new_packet.get_header().get_seq_num():
@@ -597,7 +593,6 @@ def wait_for_data_and_acknowledge(time_of_calling, next_packet_to_rec):
         server_window_size = min(server_windows_received)
     else:
         server_window_size = 10
-
     for i in range(next_packet_to_rec, len(data)):
         if not data[i].get_payload():
             return i

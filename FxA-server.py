@@ -613,23 +613,21 @@ def wait_for_acks(time_of_calling, next_packet_to_send, packets_sent, list_of_pa
     # Look at all the windows and sequence numbers received
     client_windows_received = []
     client_seq_num_received = [conn_object.client_seq_num]
-    t = 1
     while True:
         # Stay in the loop for 5 seconds
-        if t == 11:  # datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
+        if datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
             break
-
         # Try to pull something out of the Queue, block for a second, if there is nothing there, then go to the top
         try:
             new_packet = conn_object.mailbox.get(True, 1)
         except Queue.Empty:
-            t += 1
             continue
         if not new_packet.header.ack:
             continue
         # Look through the packet list to find the packet that the ACK is referencing
         for i in list_of_packets:
-            if i.get_header().seq_num + len(i.get_payload()) == new_packet.get_header().get_ack_num() and not i.acknowledged:
+            if i.get_header().seq_num + len(i.get_payload()) == new_packet.get_header().get_ack_num()\
+                    and not i.acknowledged:
                 i.acknowledged = True
                 to_return_packets_sent += 1
                 client_windows_received.append(new_packet.get_header().get_window())
