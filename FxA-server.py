@@ -265,7 +265,7 @@ def client_thread(client_loc):
             if payload_split[0] == 'GET':
                 if is_debug:
                     print 'GET'
-                get_t = threading.Thread(target=get, args=(payload_split[1], clientList[client_loc], packet,))
+                get_t = threading.Thread(target=get, args=(payload_split[1], clientList[client_loc], packet, payload,))
                 get_t.daemon = True
                 get_t.start()
                 get_t.join()
@@ -366,13 +366,15 @@ def clear_clients():
 #     server_window_size = QUEUE_MAX_SIZE - process_queue.qsize()
 
 def send(server_seq_number, client_ack_num, ack, syn, fin, nack, payload):
+    global server_window_size
     # Calculate checksum on rtp_header and payload with a blank checksum
     checksum = 0
+    server_window_size = process_queue.maxsize - process_queue.qsize()
     rtp_header_obj = RTPHeader(server_seq_number, client_ack_num, checksum, server_window_size, ack, syn, fin, nack,
                                SERVER_IP_ADDRESS_LONG, server_port)
     packed_rtp_header = pack_rtpheader(rtp_header_obj)
     packet = packed_rtp_header + payload
-    checksum = sum(bytearray(packet))
+    checksum = sum(bytearray(packet)) % 65535
 
     # Install checksum into rtp_header and package up with payload
     rtp_header_obj = RTPHeader(server_seq_number, client_ack_num, checksum, server_window_size, ack, syn, fin, nack,
@@ -400,6 +402,7 @@ def send(server_seq_number, client_ack_num, ack, syn, fin, nack, payload):
 
 def pack_rtpheader(rtp_header):
     flags = pack_bits(rtp_header.get_ack(), rtp_header.get_syn(), rtp_header.get_fin(), rtp_header.get_nack())
+    print str(rtp_header.get_port())
     rtp_header = struct.pack('!LLHLBLH', rtp_header.get_seq_num(), rtp_header.get_ack_num(), rtp_header.get_checksum(),
                              rtp_header.get_window(), flags, rtp_header.get_ip(), rtp_header.get_port())
 
@@ -410,13 +413,13 @@ def check_checksum(checksum, rtp_header, payload):
     flags = pack_bits(rtp_header.get_ack(), rtp_header.get_syn(), rtp_header.get_fin(), rtp_header.get_nack())
     packed_checksum = struct.pack('!L', checksum)
     packed_rtp_header = struct.pack('!LLHLBLH', rtp_header.get_seq_num(), rtp_header.get_ack_num(),
-                                    rtp_header.get_checksum(), rtp_header.get_window(), flags, rtp_header.get_ip(),
+                                    0, rtp_header.get_window(), flags, rtp_header.get_ip(),
                                     rtp_header.get_port())
 
     data = packed_rtp_header + payload
 
-    new_checksum = sum(bytearray(data))
-    new_checksum -= sum(bytearray(packed_checksum))
+    new_checksum = sum(bytearray(data)) % 65535
+    # new_checksum -= sum(bytearray(packed_checksum))
 
     if checksum == new_checksum:
         if is_debug:
@@ -476,7 +479,7 @@ def unpack_bits(bit_string):
     return ack, syn, fin, nack
 
 
-def get(filename, conn_object, request_packet):
+def get(filename, conn_object, request_packet, payload):
     try:
         file_handle = open(filename, 'rb')
     except IOError:
@@ -492,8 +495,12 @@ def get(filename, conn_object, request_packet):
         packet_list.append(Packet(RTPHeader(0, 0, 0, 0, 0, 0, 0, 0, net_emu_ip_address_long, net_emu_port), data,
                                   False))
     file_handle.close()
+    init_payload = 'GET|{0}|{1}'.format(filename, str(len(packet_list)))
     send(conn_object.server_seq_num, request_packet.get_header().get_seq_num() + len(request_packet.get_payload()),
-         1, 0, 0, 0, 'GET|{0}|{1}'.format(filename, str(len(packet_list))))
+         1, 0, 0, 0, init_payload)
+    conn_object.server_seq_num += len(payload)
+    for i in range(len(packet_list)):
+        packet_list[i].header.seq_num = i * 1024 + conn_object.server_seq_num
     next_packet_to_send = 0
     num_timeouts = 0
     total_packets_sent = 0
@@ -502,18 +509,28 @@ def get(filename, conn_object, request_packet):
         print '{0:.1f}%%'.format(total_packets_sent / len(packet_list))
         if is_debug:
             print('\t\t'),
-            for i in range(0, len(packet_list) - 1):
+            for i in range(0, len(packet_list)):
                 print(i),
             print ''
             print 'ACK''ed:\t',
-            for j in range(0, len(packet_list) - 1):
+            for j in range(0, min(9, len(packet_list))):
                 if packet_list[j].get_acknowledged():
-                    print(j),
+                    print('x'),
+                else:
+                    print('.'),
+            if len(packet_list) > 10:
+                for k in range(10, max(9, len(packet_list))):
+                    if packet_list[k].get_acknowledged():
+                        print('x'),
+                    else:
+                        print(' .'),
+            print ''
         # send (server window size) # of un-acknowledged packets in the packet list
         packets_sent_in_curr_window = 0
-        for x in range(next_packet_to_send, len(packet_list) - 1):
+        for x in range(next_packet_to_send, len(packet_list)):
             if not packet_list[x].get_acknowledged():  # if it has not been acknowledged
                 send(conn_object.server_seq_num, 0, 0, 0, 0, 0, packet_list[x].payload)
+                conn_object.server_seq_num += len(packet_list[x].payload)
                 packets_sent_in_curr_window += 1
                 if packets_sent_in_curr_window == conn_object.window_size:
                     break
@@ -536,7 +553,7 @@ def get(filename, conn_object, request_packet):
             # if we did receive reset timeouts
             num_timeouts = 0
         if num_timeouts == TIMEOUT_MAX_LIMIT:
-            print 'Server Unresponsive, POST failed'
+            print 'Client Unresponsive, GET failed'
             break
 
 
@@ -545,29 +562,36 @@ def wait_for_acks(time_of_calling, next_packet_to_send, packets_sent, list_of_pa
 
     # Look at all the windows and sequence numbers received
     client_windows_received = []
-    client_seq_num_received = []
-
+    client_seq_num_received = [conn_object.client_seq_num]
+    t = 1
     while True:
         # Stay in the loop for 5 seconds
-        if datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
+        if t == 11:  # datetime.datetime.now() > time_of_calling + datetime.timedelta(seconds=5):
             break
 
         # Try to pull something out of the Queue, block for a second, if there is nothing there, then go to the top
         try:
             new_packet = conn_object.mailbox.get(True, 1)
         except Queue.Empty:
+            t += 1
             continue
-
+        if not new_packet.header.ack:
+            continue
         # Look through the packet list to find the packet that the ACK is referencing
         for i in list_of_packets:
-            if i.get_header().seq_num() + len(i.get_payload()) == new_packet.get_header().get_ack_num():
+            if i.get_header().seq_num + len(i.get_payload()) == new_packet.get_header().get_ack_num() and not i.acknowledged:
                 i.acknowledged = True
                 to_return_packets_sent += 1
                 client_windows_received.append(new_packet.get_header().get_window())
                 client_seq_num_received.append(new_packet.get_header().get_seq_num())
-    conn_object.client_seq_num = max(client_seq_num_received)
-    conn_object.window_size = min(client_windows_received)
-    for i in range(next_packet_to_send, len(list_of_packets) - 1):
+                break
+    if not len(client_seq_num_received) == 0:
+        conn_object.client_seq_num = max(client_seq_num_received)
+    if not len(client_windows_received) == 0:
+        conn_object.window_size = min(client_windows_received)
+    else:
+        conn_object.window_size = 10
+    for i in range(next_packet_to_send, len(list_of_packets)):
         if not list_of_packets[i].get_acknowledged():
             return i, to_return_packets_sent
     return -1, to_return_packets_sent
@@ -580,12 +604,12 @@ def post(filename, packets_in_file, conn_object, request_packet):
     next_packet_to_rec = 0
     num_timeouts = 0
     total_packets_rec = 0
-    for i in range(0, packets_in_file - 1):
+    for i in range(0, packets_in_file):
         data.append(Packet(
             RTPHeader((request_packet.get_header().get_seq_num() + len(request_packet.get_payload())) + i * 1024, 0, 0,
                       0, 0, 0, 0, 0, 0, 0), None, None))
     while True:
-        print '{0:.1f}%%'.format(total_packets_rec / packets_in_file)
+        print '{0:.1f}%'.format(total_packets_rec / packets_in_file)
         curr_num_packets_rec = total_packets_rec
         next_packet_to_rec = wait_for_data_and_acknowledge(datetime.datetime.now(), next_packet_to_rec, data,
                                                            total_packets_rec, conn_object)
@@ -601,7 +625,7 @@ def post(filename, packets_in_file, conn_object, request_packet):
             return
     byte_data = []
     for packet in data:
-        for i in range(0, len(packet.get_payload) - 1):
+        for i in range(0, len(packet.get_payload)):
             byte_data.append(packet.get_payload[i])
     file_byte_array = bytearray(byte_data)
     file_handle = open(filename, 'wb')
@@ -640,7 +664,7 @@ def wait_for_data_and_acknowledge(time_of_calling, next_packet_to_rec):
                 send(1, 0, 0, 0, 0, i.get_header().seq_num() + len(i.get_header()))
     server_seq_num = max(server_seq_num_received)
     server_window_size = min(server_windows_received)
-    for i in range(next_packet_to_rec, len(data) - 1):
+    for i in range(next_packet_to_rec, len(data)):
         if not data[i].get_payload():
             return i
     return -1
@@ -981,7 +1005,7 @@ if __name__ == "__main__":
     is_debug = False
     terminate = False
     EMPTY_PAYLOAD = ''
-    TIMEOUT_MAX_LIMIT = 25
+    TIMEOUT_MAX_LIMIT = 10
     TIMEOUT_TIME = 1
     TIME_MAX = 60  # 1 minute
     QUEUE_MAX_SIZE = 10
