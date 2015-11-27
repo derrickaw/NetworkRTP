@@ -1,13 +1,13 @@
 # NetworkingRTP
-**CS3251 Fall 2015 Programming Assignment 2**
+**CS3251-A Fall 2015 Programming Assignment 2**
 
-| Developer        | Email                | gtID         |
-| ---------------- |:--------------------:| :-----------:|
-| Elliott Childre  | rchildre3@gatech.edu | rchildre3    |
-| Derrick Williams | derrickw@gatech.edu  | dwilliams306 |
+| Developer          | Email                | gtID         |
+| :-----------------:|:--------------------:| :-----------:|
+| R. Elliott Childre | rchildre3@gatech.edu | rchildre3    |
+| Derrick Williams   | derrickw@gatech.edu  | dwilliams306 |
 
 ## Usage
-To run the FxA application use the following commands with **Python 2**
+To run the FxA application use the following commands with **Python 2.7**
 
 ### Server
 
