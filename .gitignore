@@ -1,1 +1,5 @@
-.idea/
+*
+!*.py
+!*.md
+!*.pdf
+!Sample.txt
