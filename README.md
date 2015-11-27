@@ -1,5 +1,5 @@
 # NetworkingRTP
-**CS3251-A Fall 2015 Programming Assignment 2**
+**CS3251-A Fall 2015 Programming Assignment 2 - November 25, 2015**
 
 | Developer          | Email                | gtID         |
 | :-----------------:|:--------------------:| :-----------:|
