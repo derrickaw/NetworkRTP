@@ -1,0 +1,93 @@
+C:\Python27\python.exe C:/Users/Elliott/Documents/cs3251/NetworkingRTP/FxA-client.py 4448 127.0.0.1 5353
+********************************************************************************
+Command Options:
+connect		|	Connects to the FxA-server
+get F		|	Retrieve file F from FxA-server
+post F		|	Pushes file F to the FxA-server
+window W	|	Sets the maximum receiver's window size
+disconnect	|	Disconnect from the FxA-server
+********************************************************************************
+
+Please enter command: connect
+Establishing connection...
+Please enter command: Connection with server has been established.
+get t.txt
+0.0%
+76.9%
+Please enter command: window 5
+Client Receiving Window = 5
+Window size too small for current jobs in queue.
+Please enter command: window 10
+Client Receiving Window = 10
+Window size has been adjusted
+Please enter command: disconnect
+Trying to disconnect...
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+Process finished with exit code -1
+
+
+
+
+
+
+
+
+
+
+
+
+
+C:\Python27\python.exe C:/Users/Elliott/Documents/cs3251/NetworkingRTP/FxA-server.py 4449 127.0.0.1 5353
+********************************************************************************
+Command Options:
+window W	|	Sets the maximum receiver's window size
+terminate	|	Shut-down FxA-Server gracefully
+********************************************************************************
+
+Please enter command:
+Connection with client 192.168.56.1 4448 is being established...
+Client 192.168.56.1 4448 supposedly is established.
+0.0%
+76.9%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+Client Unresponsive, GET failed
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+0.0%
+
+Process finished with exit code -1
