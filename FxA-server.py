@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 
-
+# GET PROTOCOL
 # GET|FILENAME - CLIENT
 #     Exists --- GET|FILENAME|<# of packets> ACK - SERVER
 #     Not Exists --- GET|FILENOTFOUND|0 ACK - SERVER
@@ -18,6 +18,7 @@ import time
 # ...
 # ACK - CLIENT (PEACEFUL CLOSE)
 
+# POST PROTOCOL
 # POST|FILENAME|<# of packets> - CLIENT
 # ACK - SERVER
 # DATA - CLIENT
@@ -25,8 +26,6 @@ import time
 # DATA - CLIENT
 # ...
 # ACK -SERVER
-
-# Todo - How do we handle disconnect during file transfer; just block?
 
 
 def main(argv):
@@ -70,7 +69,6 @@ def main(argv):
     except socket.error:
         print("Invalid IP notation: %s" % argv[1])
         sys.exit(1)
-        # TODO check if port is open!
 
     # Check port number is an int
     try:
@@ -118,17 +116,21 @@ def main(argv):
 
     # Loop for server user commands
     while True:
-        command_input = str(raw_input('Please enter command:'))
+        command_input = str(raw_input('Please enter command: '))
+        # TERMINATE
         if command_input == 'terminate':
-            client_termination_flag.set()
             all_client_threads_dead = 0
-
             # Iterate through all clients and make sure they are all in State.CLOSED state
             for client in clientList:
                 if client.state != State.CLOSED:
                     all_client_threads_dead += 1
             if not all_client_threads_dead:
                 break
+            else:
+                print all_client_threads_dead
+                # All client threads see termination call
+                client_termination_flag.set()
+        # WINDOW
         else:
             parsed_command_input = command_input.split(" ")
             if parsed_command_input[0] == 'window':
@@ -148,7 +150,7 @@ def main(argv):
     print("Server closing")
     sock.close()
 
-
+# Method to update server window size for sending out packets
 def server_window_size_update(window_size):
     global server_window_size
     global process_queue
@@ -172,7 +174,7 @@ def server_window_size_update(window_size):
         process_queue_lock.release()
         print "Window size has been adjusted"
 
-
+# Method thread for receiving all packets for server
 def recv_packet():
     global clientList
     global client_list_lock
@@ -209,7 +211,7 @@ def recv_packet():
         except socket.error, msg:
             continue
 
-
+# Method thread for processing packets
 def proc_packet():
     global clientList
     global client_list_lock
@@ -248,7 +250,7 @@ def proc_packet():
             with client_list_lock:
                 clientList[client_loc].mailbox.put(packet)
 
-
+# Method thread spawned for each client that is created
 def client_thread(client_loc):
     global clientList
     timeout = 0
@@ -259,10 +261,10 @@ def client_thread(client_loc):
             server_disconnect_t.daemon = True
             server_disconnect_t.start()
             server_disconnect_t.join()
-            client_termination_flag.clear()
+            if clientList[client_loc].state == State.CLOSED:
+                break
+            # client_termination_flag.clear()
             # Verify State has been closed for this client before breaking from this thread
-            # if clientList[client_loc].state == State.CLOSED:
-            #    break
         try:
             # Wait until the process queue has a packet, block for TIMEOUT_TIME seconds
             packet = clientList[client_loc].mailbox.get(True, TIMEOUT_TIME)
@@ -272,9 +274,13 @@ def client_thread(client_loc):
             if timeout > TIME_MAX:
                 client_ip_address = socket.inet_ntoa(struct.pack("!L", clientList[client_loc].client_ip))
                 client_port = clientList[client_loc].client_port
-                # Todo - Call disconnect; if no answer first go around; change State to Close; client must be dead
-                print "Client %s %s was inactive...disconnected" % (client_ip_address, client_port)
-                return
+                server_disconnect_t = threading.Thread(target=server_initiated_disconnect, args=(client_loc,0,))
+                server_disconnect_t.daemon = True
+                server_disconnect_t.start()
+                server_disconnect_t.join()
+                if clientList[client_loc].state == State.CLOSED:
+                    print "Client %s %s was inactive...disconnected" % (client_ip_address, client_port)
+                    return
             elif clientList[client_loc].state == State.CLOSED:
                 return
             else:
@@ -289,7 +295,7 @@ def client_thread(client_loc):
         payload_split = check_for_get_or_post_request(payload)
 
         # Client calls a GET or POST command
-        if payload_split is not None:
+        if payload_split is not None and clientList[client_loc].state == State.ESTABLISHED:
 
             # GET Command
             if payload_split[0] == 'GET':
@@ -305,20 +311,19 @@ def client_thread(client_loc):
                 if is_debug:
                     print 'POST'
                 post_t = threading.Thread(target=post,
-                                          args=(payload_split[1], payload_split[2], clientList[client_loc], packet,))
+                                          args=(payload_split[1], int(payload_split[2]), clientList[client_loc], packet,))
                 post_t.daemon = True
                 post_t.start()
                 post_t.join()
 
-        # TODO - DISCONNECT INSIDE HERE
         else:
             with client_list_lock:
                 # Connection setup in progress
                 if rtp_header.get_syn() and not rtp_header.get_ack():
                     clientList[client_loc].client_ack_num = rtp_header.get_seq_num() + calc_payload_length(payload)
                     clientList[client_loc].state = State.SYN_RECEIVED
-                    send_synack(clientList[client_loc].server_connect_seq_nums[0], clientList[client_loc].client_ack_num,
-                                clientList[client_loc].hash)
+                    send_synack(clientList[client_loc].server_connect_seq_nums[0],
+                                clientList[client_loc].client_ack_num, clientList[client_loc].hash)
 
                 # Connection setup in progress
                 elif rtp_header.get_syn() and rtp_header.get_ack():
@@ -360,7 +365,7 @@ def client_thread(client_loc):
                 else:
                     clientList[client_loc].mailbox.put(packet)
 
-
+# Method wrapper for server initiated disconnect
 def server_initiated_disconnect(client_loc, num_timeouts):
 
     global clientList
@@ -374,15 +379,17 @@ def server_initiated_disconnect(client_loc, num_timeouts):
 
     begin_disconnect_success = begin_server_initiated_disconnect(client_loc, num_timeouts)
 
+    # If it failed, client must be lost; disconnect; we gave a faithful try
     if not begin_disconnect_success:
         clientList[client_loc].client_ack_num = saved_client_ack_num
         clientList[client_loc].server_seq_num = saved_server_seq_num
-        print "Termination failed...try again later."
+        clientList[client_loc].state = State.CLOSED
+        print "Termination failed, we gave a good try; disconnecting anyways."
     elif end_server_initiated_disconnect(client_loc, num_timeouts, 0):
         clientList[client_loc].state = State.CLOSED
         print "Client(s) is(are) disconnected."
 
-
+# Method for server initiated disconnect - first part
 def begin_server_initiated_disconnect(client_loc, num_timeouts):
 
     # Send out the FIN packet to initialize disconnect
@@ -393,7 +400,7 @@ def begin_server_initiated_disconnect(client_loc, num_timeouts):
         packet = process_queue.get(True, TIMEOUT_TIME)
     except Queue.Empty:  # If after blocking there still was not a packet in the queue
         # If we have timed out TIMEOUT_MAX_LIMIT times, then cancel the operation
-        if num_timeouts == TIMEOUT_MAX_LIMIT:
+        if num_timeouts >= TIMEOUT_MAX_LIMIT:
             return False
         else:
             # If we have timed out less than TIMEOUT_MAX_LIMIT times, then try again with num_timeouts incremented
@@ -417,7 +424,10 @@ def begin_server_initiated_disconnect(client_loc, num_timeouts):
         clientList[client_loc].state = State.FIN_WAIT_2
         return True
 
+    else:
+        return begin_server_initiated_disconnect(client_loc, num_timeouts + 1)
 
+# Method for server initiated disconnect - second part
 def end_server_initiated_disconnect(client_loc, num_timeouts, time_wait_counter):
 
     try:
@@ -425,7 +435,7 @@ def end_server_initiated_disconnect(client_loc, num_timeouts, time_wait_counter)
         packet = process_queue.get(True, TIMEOUT_TIME)
     except Queue.Empty:  # If after blocking there still was not a packet in the queue
         # If we have timed out TIMEOUT_MAX_LIMIT times, then cancel the operation
-        if num_timeouts == TIMEOUT_MAX_LIMIT:
+        if num_timeouts >= TIMEOUT_MAX_LIMIT:
             return False
         # Wait 5 cycles before closing in case server never received ACK
         elif clientList[client_loc].state == State.TIME_WAIT and time_wait_counter == TIME_WAIT_MAX:
@@ -440,8 +450,6 @@ def end_server_initiated_disconnect(client_loc, num_timeouts, time_wait_counter)
     rtp_header = packet.get_header()
     payload = packet.get_payload()
 
-
-
     # Check client ack_num from recent packet received with pre-populated seq_nums
     # If bad, recurse
     if rtp_header.get_ack_num() != clientList[client_loc].server_disconnect_seq_nums[1]:
@@ -450,7 +458,7 @@ def end_server_initiated_disconnect(client_loc, num_timeouts, time_wait_counter)
         return end_server_initiated_disconnect(client_loc, num_timeouts + 1, time_wait_counter)
 
     # We received a FIN; send ACK to complete disconnect
-    # If server indeed receives an ACK, disconnect in complete, but if the server sends another FIN, then we need
+    # If server indeed receives an ACK, disconnect in complete, but if the client sends another FIN, then we need
     # to resend an ACK and wait again
     elif rtp_header.get_fin() or clientList[client_loc].state == State.TIME_WAIT:
         # Increment server_ack_num to account for recent recv packet from server
@@ -467,9 +475,7 @@ def end_server_initiated_disconnect(client_loc, num_timeouts, time_wait_counter)
     else:
         return end_server_initiated_disconnect(client_loc, num_timeouts + 1, time_wait_counter)
 
-
-
-
+# Method for client initiated disconenct
 def client_initiated_disconnect(client_loc, num_timeouts):
     global clientList
 
@@ -485,8 +491,9 @@ def client_initiated_disconnect(client_loc, num_timeouts):
     try:
         packet = clientList[client_loc].mailbox.get(True, TIMEOUT_TIME)
     except Queue.Empty:
-        if num_timeouts == TIMEOUT_MAX_LIMIT:
+        if num_timeouts >= TIMEOUT_MAX_LIMIT:
             clientList[client_loc].disconnect_flag.clear()
+            clientList[client_loc].state = State.ESTABLISHED
             return False
         else:
             # If we have timed out less than TIMEOUT_MAX_LIMIT times, then try again with num_timeouts incremented
@@ -512,14 +519,10 @@ def client_initiated_disconnect(client_loc, num_timeouts):
         print "Client %s %s has been disconnected." % (client_ip_address, clientList[client_loc].client_port)
         return True
 
+    else:
+        return client_initiated_disconnect(client_loc, num_timeouts + 1)
 
-def check_packet_match_ack_nums(client_loc, rtp_header):
-    # Check server ack number matches seq number + payload
-    if clientList[client_loc].server_ack_num == rtp_header.get_ack_num():
-        return True
-    return False
-
-
+# Method to calculate payload length
 def calc_payload_length(payload):
 
     if len(payload) == 0:
@@ -527,7 +530,7 @@ def calc_payload_length(payload):
     else:
         return len(payload)
 
-
+# Method to check for GET or POST request
 def check_for_get_or_post_request(payload):
     if len(payload) > 0:
         payload_split = payload.split('|')
@@ -535,7 +538,7 @@ def check_for_get_or_post_request(payload):
             return payload_split
     return None
 
-
+# Method to send packets to client
 def send(server_seq_number, client_ack_num, ack, syn, fin, nack, payload):
     global server_window_size
     # Calculate checksum on rtp_header and payload with a blank checksum
@@ -570,7 +573,7 @@ def send(server_seq_number, client_ack_num, ack, syn, fin, nack, payload):
 
     sock.sendto(packet, net_emu_addr)
 
-
+# Method to pack up RTP header for sending
 def pack_rtpheader(rtp_header):
     flags = pack_bits(rtp_header.get_ack(), rtp_header.get_syn(), rtp_header.get_fin(), rtp_header.get_nack())
     rtp_header_bin = struct.pack('!LLHLBLH', rtp_header.get_seq_num(), rtp_header.get_ack_num(),
@@ -579,7 +582,7 @@ def pack_rtpheader(rtp_header):
 
     return rtp_header_bin
 
-
+# Method to check the checksum of each packet
 def check_checksum(checksum, rtp_header, payload):
     flags = pack_bits(rtp_header.get_ack(), rtp_header.get_syn(), rtp_header.get_fin(), rtp_header.get_nack())
     packed_checksum = struct.pack('!L', checksum)
@@ -601,7 +604,7 @@ def check_checksum(checksum, rtp_header, payload):
             print 'Checksum Incorrect'
         return False
 
-
+# Method to unpack RTP header to process
 def unpack_rtpheader(packed_rtp_header):
     unpacked_rtp_header = struct.unpack('!LLHLBLH', packed_rtp_header)  # 21 bytes
 
@@ -631,7 +634,7 @@ def unpack_rtpheader(packed_rtp_header):
 
     return rtp_header_obj
 
-
+# Method to pack of flag into a 1 byte string
 def pack_bits(ack, syn, fin, nack):
     bit_string = str(ack) + str(syn) + str(fin) + str(nack)
     bit_string = '0000' + bit_string
@@ -639,7 +642,7 @@ def pack_bits(ack, syn, fin, nack):
 
     return bit_string
 
-
+# Method to unpack the 1 byte string into the flags in the RTP header
 def unpack_bits(bit_string):
     bit_string = format(bit_string, '08b')
     ack = int(bit_string[4])
@@ -649,14 +652,20 @@ def unpack_bits(bit_string):
 
     return ack, syn, fin, nack
 
-
+# Method to allow the client to download a file from the server
 def get(filename, conn_object, request_packet, payload):
+
+    skip = False
+    new_packet = None
+
     try:
         file_handle = open(filename, 'rb')
     except IOError:
         print "Could not open file: {0}".format(filename)
-        send(conn_object.server_seq_num, request_packet.get_header().get_seq_num() + len(request_packet.get_payload()),
-             1, 0, 0, 0, 'GET|FILENOTFOUND|0')
+        conn_object.client_ack_num = request_packet.get_header().get_seq_num() + len(request_packet.get_payload())
+        send(conn_object.server_seq_num, conn_object.client_ack_num, 1, 0, 0, 0, 'GET|FILENOTFOUND|0')
+        #send(conn_object.server_seq_num, request_packet.get_header().get_seq_num() + len(request_packet.get_payload()),
+        #     1, 0, 0, 0, 'GET|FILENOTFOUND|0')
         return
     packet_list = []  # clear out the list of packets
     while True:
@@ -667,73 +676,95 @@ def get(filename, conn_object, request_packet, payload):
                                   False))
     file_handle.close()
     init_payload = 'GET|{0}|{1}'.format(filename, str(len(packet_list)))
-    send(conn_object.server_seq_num, request_packet.get_header().get_seq_num() + len(request_packet.get_payload()),
-         1, 0, 0, 0, init_payload)
-    conn_object.server_seq_num += len(payload)
-    for i in range(len(packet_list)):
-        packet_list[i].header.seq_num = i * 1024 + conn_object.server_seq_num
-    next_packet_to_send = 0
-    num_timeouts = 0
-    total_packets_sent = 0
-    # repeat infinitely if need be, will be broken out of if TIMEOUT_MAX_LIMIT timeouts are reached
-    while True:
-        print '{0:.1f}%'.format((total_packets_sent / float(len(packet_list))) * 100)
-        if is_debug:
-            print('\t\t'),
-            for i in range(0, len(packet_list)):
-                print(i),
-            print ''
-            print 'ACK''ed:\t',
-            for j in range(0, min(10, len(packet_list))):
-                if packet_list[j].get_acknowledged():
-                    print('x'),
-                else:
-                    print('.'),
-            if len(packet_list) > 10:
-                for k in range(10, min(100, len(packet_list))):
-                    if packet_list[k].get_acknowledged():
-                        print(' x'),
+
+    conn_object.client_ack_num = request_packet.get_header().get_seq_num() + len(request_packet.get_payload())
+    send(conn_object.server_seq_num, conn_object.client_ack_num, 1, 0, 0, 0, init_payload)
+
+    try:
+        new_packet = conn_object.mailbox.get(True, 1)
+    except Queue.Empty:
+        skip = True
+        # send(conn_object.server_seq_num, request_packet.get_header().get_seq_num() + len(request_packet.get_payload()),
+        #      1, 0, 0, 0, init_payload)
+        conn_object.server_seq_num += len(payload)
+        for i in range(len(packet_list)):
+            packet_list[i].header.seq_num = i * 1024 + conn_object.server_seq_num
+            packet_list[i].header.ack_num = i * 1 + conn_object.client_ack_num
+        next_packet_to_send = 0
+        num_timeouts = 0
+        total_packets_sent = 0
+        # repeat infinitely if need be, will be broken out of if TIMEOUT_MAX_LIMIT timeouts are reached
+        while True:
+            print '{0:.1f}%'.format((total_packets_sent / float(len(packet_list))) * 100)
+            if is_debug:
+                print('\t\t'),
+                for i in range(0, len(packet_list)):
+                    print(i),
+                print ''
+                print 'ACK''ed:\t',
+                for j in range(0, min(10, len(packet_list))):
+                    if packet_list[j].get_acknowledged():
+                        print('x'),
                     else:
-                        print(' .'),
-            if len(packet_list) > 100:
-                for k in range(100, len(packet_list)):
-                    if packet_list[k].get_acknowledged():
-                        print('  x'),
-                    else:
-                        print('  .'),
-            print ''
-        # send (server window size) # of un-acknowledged packets in the packet list
-        packets_sent_in_curr_window = 0
-        for x in range(next_packet_to_send, len(packet_list)):
-            if not packet_list[x].get_acknowledged():  # if it has not been acknowledged
-                send(packet_list[x].header.seq_num, 0, 0, 0, 0, 0, packet_list[x].payload)
-                conn_object.server_seq_num += len(packet_list[x].payload)
-                packets_sent_in_curr_window += 1
-                if packets_sent_in_curr_window == conn_object.window_size:
-                    break
+                        print('.'),
+                if len(packet_list) > 10:
+                    for k in range(10, min(100, len(packet_list))):
+                        if packet_list[k].get_acknowledged():
+                            print(' x'),
+                        else:
+                            print(' .'),
+                if len(packet_list) > 100:
+                    for k in range(100, len(packet_list)):
+                        if packet_list[k].get_acknowledged():
+                            print('  x'),
+                        else:
+                            print('  .'),
+                print ''
+            # send (server window size) # of un-acknowledged packets in the packet list
+            packets_sent_in_curr_window = 0
+            for x in range(next_packet_to_send, len(packet_list)):
+                if not packet_list[x].get_acknowledged():  # if it has not been acknowledged
+                    send(packet_list[x].header.seq_num, packet_list[x].header.ack_num, 0, 0, 0, 0, packet_list[x].payload)
+                    # send(packet_list[x].header.seq_num, 0, 0, 0, 0, 0, packet_list[x].payload)
+                    conn_object.server_seq_num += len(packet_list[x].payload)
+                    packets_sent_in_curr_window += 1
+                    if packets_sent_in_curr_window == conn_object.window_size:
+                        break
 
-        # Use temp variable to see if we actually received any
-        curr_num_packets_sent = total_packets_sent
+            # Use temp variable to see if we actually received any
+            curr_num_packets_sent = total_packets_sent
 
-        # wait_for_acks processes all the packets received in the 5 seconds after sending the window,
-        # and sets the next packet to send
-        next_packet_to_send, total_packets_sent = wait_for_acks(datetime.datetime.now(), next_packet_to_send,
-                                                                total_packets_sent, packet_list, conn_object)
+            # wait_for_acks processes all the packets received in the 5 seconds after sending the window,
+            # and sets the next packet to send
+            next_packet_to_send, total_packets_sent = wait_for_acks(datetime.datetime.now(), next_packet_to_send,
+                                                                    total_packets_sent, packet_list, conn_object)
 
-        # if we have acknowledged all of the packets, then we are done
-        if next_packet_to_send == -1:
-            break
-        # if we timeout then increment the number of timeouts
-        if curr_num_packets_sent == next_packet_to_send:
-            num_timeouts += 1
-        else:
-            # if we did receive reset timeouts
-            num_timeouts = 0
-        if num_timeouts == TIMEOUT_MAX_LIMIT:
-            print 'Client Unresponsive, GET failed'
-            break
+            # if we have acknowledged all of the packets, then we are done
+            if next_packet_to_send == -1:
+                break
+            # if we timeout then increment the number of timeouts
+            if curr_num_packets_sent == next_packet_to_send:
+                num_timeouts += 1
+            else:
+                # if we did receive reset timeouts
+                num_timeouts = 0
+            if num_timeouts == TIMEOUT_MAX_LIMIT:
+                print 'Client Unresponsive, GET failed'
+                break
+        if len(packet_list) != 0:
+            conn_object.server_seq_num = packet_list[len(packet_list)-1].header.seq_num + \
+                                                     len(packet_list[len(packet_list)-1].payload)
+            conn_object.client_ack_num = packet_list[len(packet_list)-1].header.ack_num + 1
+
+    if not skip:
+        # Check for payload commands for GET or POST
+        # payload_split = check_for_get_or_post_request(payload)
+
+        # currently, no checks
+        get(filename, conn_object, new_packet, payload)
 
 
+# Method to wait for acks from the client for data transfer
 def wait_for_acks(time_of_calling, next_packet_to_send, packets_sent, list_of_packets, conn_object):
     to_return_packets_sent = packets_sent
 
@@ -772,22 +803,26 @@ def wait_for_acks(time_of_calling, next_packet_to_send, packets_sent, list_of_pa
     return -1, to_return_packets_sent
 
 
+# Method to upload a file from the client - incomplete
 def post(filename, packets_in_file, conn_object, request_packet):
+    global data
+    global total_packets_rec
+
     # send acknowledgment of POST request
-    send(conn_object.server_seq_num, conn_object.client_ack_num, 1, 0, 0, 0, None)
+    send(conn_object.server_seq_num, conn_object.client_ack_num, 1, 0, 0, 0, '')
     data = []
     next_packet_to_rec = 0
     num_timeouts = 0
     total_packets_rec = 0
-    for i in range(0, packets_in_file):
+    for i in range(packets_in_file):
         data.append(Packet(
             RTPHeader((request_packet.get_header().get_seq_num() + len(request_packet.get_payload())) + i * 1024, 0, 0,
                       0, 0, 0, 0, 0, 0, 0), None, None))
     while True:
         print '{0:.1f}%'.format(total_packets_rec / packets_in_file)
         curr_num_packets_rec = total_packets_rec
-        next_packet_to_rec = wait_for_data_and_acknowledge(datetime.datetime.now(), next_packet_to_rec, data,
-                                                           total_packets_rec, conn_object)
+        next_packet_to_rec = wait_for_data_and_acknowledge(datetime.datetime.now(), next_packet_to_rec, conn_object)
+
         if next_packet_to_rec == -1:
             break
         if curr_num_packets_rec == total_packets_rec:
@@ -807,8 +842,8 @@ def post(filename, packets_in_file, conn_object, request_packet):
     file_handle.write(file_byte_array)
     file_handle.close()
 
-
-def wait_for_data_and_acknowledge(time_of_calling, next_packet_to_rec):
+# Method to wait for data from the client and send ACKs to the client - incomplete
+def wait_for_data_and_acknowledge(time_of_calling, next_packet_to_rec, conn_object):
     global server_window_size
     global server_seq_num
     global total_packets_rec
@@ -825,26 +860,32 @@ def wait_for_data_and_acknowledge(time_of_calling, next_packet_to_rec):
 
         # Try to pull something out of the Queue, block for a second, if there is nothing there, then go to the top
         try:
-            new_packet = process_queue.get(True, 1)
+            new_packet = conn_object.mailbox.get(True, 1)
         except Queue.Empty:
             continue
 
         # Look through the packet list to find the packet that the ACK is referencing
         for i in data:
-            if i.get_header().seq_num() == new_packet.get_header().get_seq_num():
-                total_packets_rec += 1
+            if i.get_header().seq_num == new_packet.get_header().get_seq_num():
+                if i.payload is None:
+                    total_packets_rec += 1
+                    i.payload = new_packet.get_payload()
                 server_windows_received.append(new_packet.get_header().get_window())
                 server_seq_num_received.append(new_packet.get_header().get_seq_num())
                 i.payload = new_packet.get_payload()
-                send(1, 0, 0, 0, 0, i.get_header().seq_num() + len(i.get_header()))
-    server_seq_num = max(server_seq_num_received)
-    server_window_size = min(server_windows_received)
+                send(1, 0, 0, 0, 0, i.get_header().seq_num() + len(i.get_header()), '')
+    if not len(server_seq_num_received) == 0:
+        server_seq_num = max(server_seq_num_received)
+    if not len(server_windows_received) == 0:
+        server_window_size = min(server_windows_received)
+    else:
+        server_window_size = 10
     for i in range(next_packet_to_rec, len(data)):
         if not data[i].get_payload():
             return i
     return -1
 
-
+# Method to check where a client is in the main client list
 def check_client_list(client_ip_address, client_port):
     with client_list_lock:
         for i in range(len(clientList)):
@@ -858,26 +899,23 @@ def check_client_list(client_ip_address, client_port):
         print 'Client not found in connection list'
     return None
 
-
+# Method to send SYN+ACK
 def send_synack(server_seq_num, client_ack_num, payload):
     send(server_seq_num, client_ack_num, 1, 1, 0, 0, payload)
 
-
+# Method to send a NACK
 def send_nack(server_seq_num, client_ack_num):
     send(server_seq_num, client_ack_num, 0, 0, 0, 1, EMPTY_PAYLOAD)
 
-
+# Method to send an ACK
 def send_ack(server_seq_num, client_ack_num):
     send(server_seq_num, client_ack_num, 1, 0, 0, 0, EMPTY_PAYLOAD)
 
-
+# Method to send a FIN
 def send_fin(server_seq_num, client_ack_num):
     send(server_seq_num, client_ack_num, 0, 0, 1, 0, EMPTY_PAYLOAD)
 
-
-
-
-
+# Connection class for storing all client important information
 class Connection:
     def __init__(self, seq_num, ack_num, window_size, ack, syn, fin, nack, client_ip, client_port):
         self.state = State.LISTEN
@@ -931,77 +969,8 @@ class Connection:
 
     def update_on_receive(self, ack, syn, fin, nack, client_loc):
         pass
-        # TODO - what happens with mid-client setup
 
-        # if self.state == State.ESTABLISHED:
-        #     if syn and ack:
-        #         self.state = State.SYN_RECEIVED
-        #     elif not syn and not ack and fin:
-        #         self.state = State.CLOSE_WAIT
-                # send_ack(self.server_disconnect_seq_nums[0], self.client_ack_num)
-
-        # if self.state == State.CLOSE_WAIT:
-            # complete_client_disconnect(client_loc, 0)
-
-        # if self.state == State.SYN_RECEIVED:
-        #     # if syn and not ack:
-        #     #     self.state = State.LISTEN
-        #     elif syn and ack:
-        #         # Hashes match; complete 4-way handshake
-        #         if self.hash_from_client == self.hash_of_hash:
-        #             self.state = State.ESTABLISHED
-        #             self.client_ack_num = self.client_seq_num + 1
-        #             send_ack(self.server_connect_seq_nums[1], self.client_ack_num)
-
-        # if self.state == State.LISTEN:
-        #     if syn and not ack:
-        #         self.state = State.SYN_RECEIVED
-        #         send_synack(self.server_connect_seq_nums[0], self.client_ack_num, self.hash)
-        #
-        # if self.state == State.ESTABLISHED:
-        #     client_ip_address = socket.inet_ntoa(struct.pack("!L", self.client_ip))
-        #     print "Client %s %s supposedly established or re-established." % (client_ip_address, self.client_port)
-        #
-        # if self.state == State.CLOSED:
-        #     client_ip_address = socket.inet_ntoa(struct.pack("!L", self.client_ip))
-        #     print "Client %s %s has been disconnected." % (client_ip_address, self.client_port)
-
-
-        # if self.state == State.LAST_ACK:
-        #     if not syn and ack and not fin:
-        #         self.state = State.CLOSED
-        #     else:
-        #         self.state = State.CLOSE_WAIT
-
-        # elif self.state == State.ESTABLISHED:
-        #    if not syn and not ack and fin:
-        #         self.state = State.CLOSE_WAIT
-        #         ack()
-        # elif self.state == State.LAST_ACK:
-        #     if not syn and ack and not fin:
-        #         self.state = State.CLOSED
-        # elif self.state == State.FIN_WAIT_1:
-        #     if not syn and not ack and fin:
-        #         ack()
-        #         self.state = State.CLOSING
-        #     if not syn and ack and not fin:
-        #         self.state = State.FIN_WAIT_2
-        #     if not syn and ack and fin:
-        #         ack()
-        #         self.state = State.TIME_WAIT
-        # elif self.state == State.FIN_WAIT_2:
-        #     if not syn and not ack and fin:
-        #         ack()
-        #         self.state = State.TIME_WAIT
-        # elif self.state == State.CLOSING:
-        #     if not syn and ack and not fin:
-        #         self.state = State.TIME_WAIT
-        # else:
-        #    print('state not valid')
-
-
-
-
+# State class for storing all the protocol states the client can be in
 class State:
     LISTEN = 0
     SYN_SENT = 1
@@ -1019,7 +988,7 @@ class State:
     def __init__(self):
         pass
 
-
+# RTP Header class for storing all important information for transporting data
 class RTPHeader:
     def __init__(self, seq_num, ack_num, checksum, window, ack, syn, fin, nack, ip, port):
         self.seq_num = seq_num
@@ -1063,7 +1032,7 @@ class RTPHeader:
     def get_port(self):
         return self.port
 
-
+# Packet class for storing RTP Header, payload, and ACKs
 class Packet:
     def __init__(self, header, payload, acknowledged):
         self.header = header
@@ -1086,11 +1055,11 @@ if __name__ == "__main__":
     is_debug = False
     terminate = False
     EMPTY_PAYLOAD = ''
-    TIMEOUT_MAX_LIMIT = 25
-    TIMEOUT_TIME = 5
+    TIMEOUT_MAX_LIMIT = 20
+    TIMEOUT_TIME = 2
     TIME_MAX = 60  # 1 minute
     QUEUE_MAX_SIZE = 10
-    TIME_WAIT_MAX = 5
+    TIME_WAIT_MAX = 2
 
     # Server
     server_window_size = 1
@@ -1099,6 +1068,8 @@ if __name__ == "__main__":
     SERVER_IP_ADDRESS_LONG = struct.unpack("!L", socket.inet_aton(SERVER_IP_ADDRESS))[0]
     process_queue = Queue.Queue(maxsize=QUEUE_MAX_SIZE)
     process_queue_lock = threading.Lock()
+    total_packets_rec = 0
+    data = []
 
     # NetEmu
     net_emu_ip_address = ''
